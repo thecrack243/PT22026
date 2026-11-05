@@ -4,6 +4,9 @@
 # Assignment guidelines
 /guidelines/
 
+# Test
+/tests/
+
 # Trained model weights
 /models/
 *.joblib

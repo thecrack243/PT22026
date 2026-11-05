@@ -2,10 +2,6 @@
 
 A replay-based backtesting tool for fraud detection. It replays a historical batch of mobile money transactions in time order, scores each transaction with a selectable model, and lets a risk manager choose how to act on those scores (threshold, daily review capacity) while seeing the money saved and lost.
 
-> **Course:** Professional Training, Midterm Project
-> **Student:** `<Your full name>` (`<Student ID>`), folder `ngo090`
-> **Status:** model training and evaluation complete; decision layer and Streamlit app in progress (see [Project status](#project-status)).
-
 ---
 
 ## 1. Problem and idea
