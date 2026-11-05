@@ -1,0 +1,35 @@
+# Downloaded dataset
+/data/
+
+# Assignment guidelines
+/guidelines/
+
+# Trained model weights
+/models/
+*.joblib
+*.pkl
+*.pt
+*.pth
+
+# Generated binary training data; regenerate with train/train.py
+/results/**/baseline_scores.npz
+*.parquet
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.ipynb_checkpoints/
+
+# Tool and OS artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
+Thumbs.db

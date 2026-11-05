@@ -1,0 +1,21 @@
+{
+  "feature_set": "leakage_safe_no_amount_to_balance_oldbalanceOrg",
+  "include_balances": false,
+  "features": [
+    "amount",
+    "oldbalanceDest",
+    "is_transfer",
+    "hour_of_day",
+    "dest_balance_zero"
+  ],
+  "dropped_features": [
+    "amount_to_balance",
+    "oldbalanceOrg"
+  ],
+  "split_step": 500,
+  "daily_capacity_k": 300,
+  "train_rows": 2645779,
+  "test_rows": 124630,
+  "test_fraud_rate": 0.021278985797961968,
+  "supervised_pos_weight": 71.92950908110052
+}
