@@ -13,9 +13,28 @@
     "oldbalanceOrg"
   ],
   "split_step": 500,
+  "val_steps": 100,
   "daily_capacity_k": 300,
-  "train_rows": 2645779,
+  "train_rows": 2529536,
+  "val_rows": 116243,
   "test_rows": 124630,
   "test_fraud_rate": 0.021278985797961968,
-  "supervised_pos_weight": 71.92950908110052
+  "supervised_pos_weight": 89.34554389099844,
+  "engine_weights": {
+    "xgboost": 1.764432768115576,
+    "logistic_regression": 0.17396233685135362,
+    "isolation_forest": 0.14872185921045297
+  },
+  "engine_intercept": -2.3354387673485566,
+  "feature_reference": {
+    "amount": 171704.21875,
+    "oldbalanceDest": 558465.3125,
+    "is_transfer": 0.0,
+    "hour_of_day": 14.0,
+    "dest_balance_zero": 0.0
+  },
+  "replay_seed": 332356705,
+  "replay_rows": 39102,
+  "replay_first_step": 501,
+  "replay_last_step": 743
 }

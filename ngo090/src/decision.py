@@ -177,6 +177,19 @@ def decide(df: pd.DataFrame, scores, policy: Policy) -> pd.Series:
     return pd.Series(action, index=df.index, name="action")
 
 
+def decide_one(risk: float, policy: Policy) -> str:
+    """Action for a single transaction.
+
+    Review capacity cannot be known for one isolated transaction, so it is
+    assumed available unless the policy has no review capacity at all.
+    """
+    if risk >= policy.block_threshold:
+        return BLOCK
+    if risk >= policy.review_min_score and policy.daily_capacity > 0:
+        return REVIEW
+    return APPROVE
+
+
 # --------------------------------------------------------------------------- #
 # Money
 # --------------------------------------------------------------------------- #
@@ -265,3 +278,64 @@ def sweep_block_threshold(df: pd.DataFrame, scores, costs: CostConfig,
         metrics["block_threshold"] = float(t)
         rows.append(metrics)
     return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------- #
+# Presets and policy advice
+# --------------------------------------------------------------------------- #
+# Ready-made policies in risk-score units (the same values as the dashboard sliders).
+PRESETS = {
+    "Balanced": Policy(block_threshold=99.5, review_min_score=90.0, daily_capacity=150),
+    "Light touch": Policy(block_threshold=99.9, review_min_score=95.0, daily_capacity=50),
+    "Strict": Policy(block_threshold=99.0, review_min_score=85.0, daily_capacity=300),
+}
+
+# Settings the advisor tries (risk 100 means "never block automatically").
+BLOCK_CANDIDATES = (90.0, 95.0, 97.0, 98.0, 98.5, 99.0, 99.3, 99.5, 99.7, 99.9, 100.0)
+CAPACITY_CANDIDATES = (0, 50, 100, 150, 200, 300, 400, 500, 750, 1000)
+
+
+@dataclass(frozen=True)
+class Recommendation:
+    """Result of trying many policies on a replay (a backtest)."""
+    block_candidates: tuple[float, ...]
+    block_net: tuple[float, ...]            # net benefit for each auto-block setting
+    best_block: float
+    capacity_candidates: tuple[int, ...]
+    capacity_net: tuple[float, ...]         # net benefit for each capacity (at the best block setting)
+    best_capacity: int
+    current_net: float                      # net benefit of the policy in use
+    best_net: float                         # net benefit of the recommended policy
+
+
+def _with(policy: Policy, block: float, capacity: int) -> Policy:
+    return Policy(block_threshold=float("inf") if block >= 100 else float(block),
+                  review_min_score=policy.review_min_score, daily_capacity=int(capacity),
+                  capacity_mode=policy.capacity_mode)
+
+
+def recommend_policy(df: pd.DataFrame, scores, costs: CostConfig, policy: Policy,
+                     block_candidates=BLOCK_CANDIDATES, capacity_candidates=CAPACITY_CANDIDATES) -> Recommendation:
+    """Find the auto-block threshold and review capacity with the best net benefit.
+
+    A backtest: it uses the true labels of the replayed transactions (hindsight),
+    so it is guidance for choosing settings, not a prediction of the future.
+    Ties go to the less aggressive setting (higher threshold, lower capacity).
+    """
+    scores = np.asarray(scores, dtype=float)
+
+    def net(pol: Policy) -> float:
+        return evaluate(df, decide(df, scores, pol), costs)["net_benefit"]
+
+    block_net = [net(_with(policy, b, policy.daily_capacity)) for b in block_candidates]
+    best_i = len(block_net) - 1 - int(np.argmax(block_net[::-1]))     # last maximum
+    best_block = block_candidates[best_i]
+
+    capacity_net = [net(_with(policy, best_block, c)) for c in capacity_candidates]
+    best_c = int(np.argmax(capacity_net))                             # first maximum
+    return Recommendation(
+        block_candidates=tuple(block_candidates), block_net=tuple(block_net), best_block=best_block,
+        capacity_candidates=tuple(capacity_candidates), capacity_net=tuple(capacity_net),
+        best_capacity=int(capacity_candidates[best_c]),
+        current_net=net(policy), best_net=capacity_net[best_c],
+    )
