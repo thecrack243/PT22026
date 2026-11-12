@@ -33,28 +33,60 @@ from src.artifacts import discover_runs  # noqa: E402
 
 REPLAY, LIVE, TESTING = "Historical replay", "Live simulation", "Transaction testing"
 MODES = (LIVE, REPLAY, TESTING)    # the live feed is what greets the analyst
+SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing"}
+ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":material/science:"}
 
 st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout="wide",
-                   initial_sidebar_state="collapsed")
+                   initial_sidebar_state="expanded")
 
 
-def render_nav() -> str:
-    """Mode switch under the header. Returns the mode to show.
+def _switch_to(mode: str) -> None:
+    """Runs before the page is drawn, so the sidebar and the page agree in one pass."""
+    st.session_state.mode = mode
 
-    The widget has no key on purpose: its default is the current mode, so the
-    stored state and the widget can never disagree (a keyed widget plus a
-    default produces a Streamlit warning and a stale selection).
-    """
+
+def render_sidebar() -> str:
+    """The three modes live in the sidebar; the page itself stays one canvas."""
     st.session_state.setdefault("mode", MODES[0])
-    if hasattr(st, "segmented_control"):
-        choice = st.segmented_control("Mode", MODES, default=st.session_state.mode,
-                                      label_visibility="collapsed")
-    else:
-        choice = st.radio("Mode", MODES, horizontal=True, index=MODES.index(st.session_state.mode),
-                          label_visibility="collapsed")
-    if choice:                                     # a segmented control can be deselected; keep the last mode
-        st.session_state.mode = choice
+    with st.sidebar:
+        st.markdown(ui.sidebar_brand(), unsafe_allow_html=True)
+        st.markdown('<div class="fa-root"><div class="fa-side-label">Modes</div></div>',
+                    unsafe_allow_html=True)
+        for mode in MODES:
+            st.button(mode, key=f"nav_{SLUG[mode]}", icon=ICON[mode], width="stretch",
+                      type="primary" if st.session_state.mode == mode else "secondary",
+                      on_click=_switch_to, args=(mode,))
+        st.markdown(ui.sidebar_footer(), unsafe_allow_html=True)
     return st.session_state.mode
+
+
+def page_entry(slug: str) -> tuple[int, bool]:
+    """A counter that only moves when the visible page changes.
+
+    It becomes part of the keyframe name, so a mode switch replays the fade-in while a
+    live page that repaints every second keeps the same name and stays still.
+    """
+    state = st.session_state
+    changed = state.get("_page_slug") != slug
+    if changed:
+        state["_page_slug"] = slug
+        state["_page_token"] = int(state.get("_page_token", 0)) + 1
+    return state["_page_token"], changed
+
+
+def scroll_to_top() -> None:
+    """A mode switch starts at the top of the new page instead of at the old offset."""
+    try:
+        import streamlit.components.v1 as components
+
+        components.html(
+            "<script>try{const w=window.parent;w.scrollTo(0,0);"
+            "const m=w.document.querySelector('[data-testid=\"stMain\"]');"
+            "if(m){m.scrollTop=0}}catch(e){}</script>",
+            height=0,
+        )
+    except Exception:                               # never let a cosmetic touch break the page
+        pass
 
 
 def main() -> None:
@@ -77,16 +109,23 @@ def main() -> None:
         st.stop()
 
     header = st.empty()                             # each mode fills in its own header
-    mode = render_nav()
+    mode = render_sidebar()
     if mode != REPLAY:
         st.session_state["playing"] = False         # a replay does not keep running in the background
 
-    if mode == REPLAY:
-        mode_replay.render(header, tag, run)
-    elif mode == LIVE:
-        mode_live.render(header, tag, run, engine)
-    else:
-        mode_testing.render(header, tag, run, engine)
+    slug = SLUG[mode]
+    token, changed = page_entry(slug)
+    if changed:
+        scroll_to_top()
+    st.markdown(ui.page_animation(token, slug), unsafe_allow_html=True)
+
+    with st.container(key=f"page-{slug}"):
+        if mode == REPLAY:
+            mode_replay.render(header, tag, run)
+        elif mode == LIVE:
+            mode_live.render(header, tag, run, engine)
+        else:
+            mode_testing.render(header, tag, run, engine)
 
 
 main()

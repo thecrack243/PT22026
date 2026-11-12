@@ -176,7 +176,8 @@ def render(header, tag: str, run) -> None:
     pos = st.session_state.pos
     state = ("playing" if st.session_state.playing else "finished" if pos >= len(steps)
              else "ready" if pos == 0 else "stopped")
-    header.markdown(ui.header_html(state, f"PaySim replay · days {first_day}–{last_day} · {sample_text}"),
+    header.markdown(ui.header_html(state, f"PaySim replay · days {first_day}–{last_day} · {sample_text}",
+                                  "Historical replay"),
                     unsafe_allow_html=True)
 
     cfg = render_controls(day_lo, day_hi)

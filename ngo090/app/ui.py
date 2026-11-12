@@ -25,8 +25,7 @@ STYLE = """
 .stApp{background:radial-gradient(1100px 520px at 85% -8%,rgba(37,99,235,.28),transparent 60%),
 radial-gradient(900px 480px at -5% 105%,rgba(14,165,233,.14),transparent 60%),linear-gradient(180deg,#060b18,#0a1328);}
 [data-testid="stHeader"],[data-testid="stToolbar"],#MainMenu,footer{display:none !important;}
-[data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"]{display:none !important;}
-.block-container{padding-top:1.1rem !important;padding-bottom:2rem !important;max-width:1500px !important;}
+.block-container{padding-top:1.16rem !important;padding-bottom:2rem !important;max-width:1500px !important;}
 .fa-root{font-family:Inter,"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;color:#e6edf7;}
 .fa-root *{box-sizing:border-box;}
 .fa-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:4px 0 18px;flex-wrap:wrap;}
@@ -134,6 +133,41 @@ background:rgba(18,30,56,.85) !important;color:#e6edf7 !important;font-weight:60
 background:linear-gradient(180deg,rgba(19,32,60,.86),rgba(11,20,40,.88));box-shadow:0 10px 34px rgba(0,0,0,.38);}
 [class*="st-key-alert_"] button{width:100% !important;justify-content:flex-start !important;text-align:left !important;min-height:38px;padding:4px 12px !important;font-weight:500 !important;font-size:13px !important;}
 [class*="st-key-alert_"] button p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.fa-ptitle{font-size:27px;font-weight:700;letter-spacing:-.5px;line-height:1.12;}
+.fa-psub{color:#9db0cf;font-size:13.5px;margin-top:5px;}
+/* ---- sidebar: the only place where the mode is chosen ---- */
+section[data-testid="stSidebar"]{width:272px !important;min-width:272px !important;
+background:linear-gradient(180deg,#070d1a 0%,#0a1428 58%,#070e1c 100%) !important;
+border-right:1px solid rgba(96,140,220,.16) !important;box-shadow:4px 0 30px rgba(0,0,0,.32);}
+section[data-testid="stSidebar"]>div{background:transparent !important;}
+[data-testid="stSidebarHeader"]{height:0 !important;min-height:0 !important;padding:0 !important;overflow:hidden;}
+[data-testid="stSidebarCollapseButton"],[data-testid="stSidebarCollapsedControl"]{display:none !important;}
+[data-testid="stSidebarUserContent"]{padding:20px 14px 18px !important;}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{gap:.32rem !important;}
+.fa-side-brand{display:flex;align-items:center;gap:11px;padding:2px 6px 22px;}
+.fa-side-logo{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+background:linear-gradient(145deg,rgba(59,130,246,.38),rgba(14,165,233,.10));border:1px solid rgba(96,165,250,.45);
+box-shadow:0 0 18px rgba(59,130,246,.30);}
+.fa-side-name{font-size:15.5px;font-weight:700;letter-spacing:-.2px;line-height:1.15;}
+.fa-side-sub{font-size:10.5px;color:#8fa3c2;letter-spacing:.13em;text-transform:uppercase;margin-top:3px;}
+.fa-side-label{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#7f93b3;font-weight:700;
+margin:0 0 7px;padding-left:9px;}
+.fa-side-foot{margin-top:16px;padding:12px 13px;border-radius:13px;background:rgba(18,30,56,.55);
+border:1px solid rgba(96,140,220,.18);}
+.fa-side-foot .row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#d2dff3;font-weight:600;}
+.fa-side-foot .note{font-size:11.5px;color:#8397b7;margin-top:5px;}
+section[data-testid="stSidebar"] .stButton>button{justify-content:flex-start !important;text-align:left !important;
+gap:10px !important;padding:0 13px !important;min-height:43px !important;border-radius:12px !important;
+background:transparent !important;border:1px solid transparent !important;color:#b6c6e2 !important;
+font-weight:600 !important;box-shadow:none !important;
+transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease;}
+section[data-testid="stSidebar"] .stButton>button:hover{background:rgba(59,130,246,.13) !important;
+border-color:rgba(96,140,220,.30) !important;color:#eef5ff !important;transform:translateX(2px);}
+section[data-testid="stSidebar"] .stButton>button[kind="primary"]{background:linear-gradient(135deg,rgba(37,99,235,.96),rgba(14,165,233,.78)) !important;
+border:1px solid rgba(125,184,255,.42) !important;color:#fff !important;
+box-shadow:0 8px 22px rgba(37,99,235,.32) !important;transform:none;}
+section[data-testid="stSidebar"] .stButton>button p{font-size:14px !important;font-weight:600 !important;}
+@media (prefers-reduced-motion:reduce){section[data-testid="stSidebar"] .stButton>button{transition:none !important;}}
 </style>
 """
 
@@ -271,7 +305,8 @@ def kpi_card(label: str, value: str, delta_html: str, ic: str, color: str, tone:
             f'{sparkline(spark_values, color, uid)}</div>')
 
 
-def area_chart(x_labels: list[str], series: list[dict], uid: str, width: int = 760, height: int = 250) -> str:
+def area_chart(x_labels: list[str], series: list[dict], uid: str, width: int = 760, height: int = 250,
+               empty_hint: str = "Press Start to begin the replay") -> str:
     """Smooth multi-series area chart. series: [{'name', 'color', 'values'}]."""
     n = len(x_labels)
     left, right, top, bottom = 46, 14, 14, 30
@@ -283,7 +318,7 @@ def area_chart(x_labels: list[str], series: list[dict], uid: str, width: int = 7
         return (f'<svg viewBox="0 0 {width} {height}" style="width:100%;height:auto;display:block">{grid}'
                 f'<text x="{left - 8}" y="{top + ph + 4:.1f}" text-anchor="end" font-size="12" fill="{MUTED}">0</text>'
                 f'<text x="{width / 2:.0f}" y="{top + ph / 2:.0f}" text-anchor="middle" font-size="14" fill="{MUTED}">'
-                'Press Start to begin the replay</text></svg>')
+                f'{escape(empty_hint)}</text></svg>')
     vmax = max((max(s["values"]) for s in series if len(s["values"])), default=0)
     vmin = min((min(s["values"]) for s in series if len(s["values"])), default=0)
     ticks = _nice_ticks(float(vmax), vmin=float(vmin))
@@ -415,19 +450,50 @@ def card(title: str, body: str, ic: str = "bars", legend: str = "") -> str:
 # --------------------------------------------------------------------------- #
 # Page pieces
 # --------------------------------------------------------------------------- #
-def header_html(state: str, period: str) -> str:
+def header_html(state: str, period: str, title: str) -> str:
+    """Page heading: the mode name on the left, the data window and status on the right."""
     label, dot = {"ready": ("Ready", "idle"), "playing": ("Replay running", "live"),
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
                   "testing": ("Ready to test", "live"), "live": ("Simulated live", "live")}[state]
     return compact(
-        f'<div class="fa-root"><div class="fa-head"><div class="fa-brand"><div class="fa-logo">{icon("shield-check", "#7db8ff", 32)}</div>'
-        f'<div><div class="fa-title">Fraud Audit <span>&middot; Risk Monitor</span></div>'
-        f'<div class="fa-sub">Replay-based fraud monitoring and decision dashboard</div></div></div>'
-        f'<div class="fa-pills"><div class="fa-pill">{escape(period)}</div>'
-        f'<div class="fa-pill"><i class="fa-dot {dot}"></i>{label}</div></div></div></div>')
+        f'<div class="fa-root"><div class="fa-head"><div>'
+        f'<div class="fa-ptitle">{escape(title)}</div>'
+        f'<div class="fa-psub">{escape(period)}</div></div>'
+        f'<div class="fa-pills"><div class="fa-pill"><i class="fa-dot {dot}"></i>{label}</div></div></div></div>')
 
 
-def dashboard_rows(view: dict) -> dict:
+def sidebar_brand() -> str:
+    """The product mark at the top of the sidebar."""
+    return compact(
+        f'<div class="fa-root"><div class="fa-side-brand">'
+        f'<div class="fa-side-logo">{icon("shield-check", "#7db8ff", 21)}</div>'
+        f'<div><div class="fa-side-name">Fraud Audit</div>'
+        f'<div class="fa-side-sub">Risk Monitor</div></div></div></div>')
+
+
+def sidebar_footer(ready: bool = True) -> str:
+    """Small state block under the navigation."""
+    row = (f'<i class="fa-dot {"live" if ready else "idle"}"></i>'
+           f'{"Engine ready" if ready else "Engine unavailable"}')
+    return compact(
+        f'<div class="fa-root"><div class="fa-side-foot"><div class="row">{row}</div>'
+        f'<div class="note">3 detectors &middot; PaySim format</div></div></div>')
+
+
+def page_animation(token: int, slug: str) -> str:
+    """Fade the page in once per mode switch.
+
+    The keyframe name carries the token, so it only restarts when the mode changes:
+    a live feed that repaints every second keeps the same name and stays still.
+    """
+    return compact(
+        f'<style>@keyframes faIn{token}{{from{{opacity:0;transform:translateY(8px)}}'
+        f'to{{opacity:1;transform:none}}}}'
+        f'.st-key-page-{slug}{{animation:faIn{token} .28s cubic-bezier(.22,.7,.3,1) both;}}'
+        f'@media (prefers-reduced-motion:reduce){{.st-key-page-{slug}{{animation:none;}}}}</style>')
+
+
+def dashboard_rows(view: dict, empty_hint: str = "Press Start to begin the replay") -> dict:
     """The cards shared by the replay and the live screen, as HTML strings."""
     m = view["metrics"]
     alerts = m["reviewed"] + m["blocked"]
@@ -448,7 +514,7 @@ def dashboard_rows(view: dict) -> dict:
     trend = area_chart(view["hours"], [
         {"name": "Transactions", "color": BLUE, "values": view["tx_per_hour"]},
         {"name": "Alerts", "color": RED, "values": view["alerts_per_hour"]},
-    ], "t")
+    ], "t", empty_hint=empty_hint)
     legend = f'<span><i style="background:{BLUE}"></i>Transactions / hour</span><span><i style="background:{RED}"></i>Alerts / hour</span>'
     decisions = donut([("Approved", m["approved"], BLUE), ("Sent to review", m["reviewed"], AMBER),
                        ("Blocked", m["blocked"], RED)], f"{alert_rate:.1%}", "Alert rate")
@@ -456,7 +522,7 @@ def dashboard_rows(view: dict) -> dict:
     money = area_chart(view["hours"], [
         {"name": "Fraud stopped", "color": GREEN, "values": view["cum_saved"]},
         {"name": "Fraud lost", "color": RED, "values": view["cum_lost"]},
-    ], "m", height=220)
+    ], "m", height=220, empty_hint=empty_hint)
     money_legend = f'<span><i style="background:{GREEN}"></i>Fraud stopped</span><span><i style="background:{RED}"></i>Fraud lost</span>'
     return {
         "kpis": f'<div class="fa-grid fa-kpis">{kpis}</div>',
@@ -630,7 +696,7 @@ def live_status_strip(view: dict, clock: str, avg_ms: float, rate: float, proces
 
 def live_dashboard_html(view: dict, strip: str) -> str:
     """Status strip, tiles and charts of the live screen (the feed and alerts are drawn separately)."""
-    rows = dashboard_rows(view)
+    rows = dashboard_rows(view, empty_hint="Waiting for the first simulated transactions&hellip;")
     return compact(f'{strip}<div class="fa-root">{rows["kpis"]}{rows["trends"]}{rows["money"]}</div>')
 
 

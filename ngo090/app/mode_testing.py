@@ -107,7 +107,8 @@ def _render_file(tag: str, policy: Policy, costs) -> None:
 
 def render(header, tag: str, run, engine) -> None:
     """Draw the whole testing mode. `header` is the placeholder at the top of the page."""
-    header.markdown(ui.header_html("testing", "Transaction testing · same engine as the replay"),
+    header.markdown(ui.header_html("testing", "Same engine as the replay, one transaction at a time",
+                                  "Transaction testing"),
                     unsafe_allow_html=True)
     cols = st.columns([1.5, 1.2, 4])
     with cols[0]:

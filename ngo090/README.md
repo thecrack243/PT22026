@@ -153,7 +153,7 @@ python run_local.py
 
 The app needs a trained run, so run the training command in section 4 first. Model files are not stored in the repository. `results/replay_sample.csv.gz` is, so the replay mode has data to work with as soon as the models exist.
 
-The mode switch sits under the header, and each mode keeps its own settings when you move between them.
+The three modes are buttons in the left sidebar (the active one is highlighted); each mode keeps its own settings when you move between them. Switching modes fades the new page in and scrolls it to the top, while a running live feed keeps repainting without restarting the animation.
 
 ### 7.1 Historical replay
 
@@ -256,7 +256,7 @@ ngo090/
 ├── requirements.txt
 ├── run_local.py              # Windows launcher (works around a certificate-store error)
 ├── app/
-│   ├── app.py                # entry point, mode switch
+│   ├── app.py                # entry point, sidebar navigation, page transitions
 │   ├── common.py             # cached loaders, policy and cost widgets
 │   ├── mode_replay.py        # mode 1: historical replay
 │   ├── mode_live.py          # mode 2: live simulation

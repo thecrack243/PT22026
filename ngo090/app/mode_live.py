@@ -154,7 +154,8 @@ def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show
 def render(header, tag: str, run, engine) -> None:
     """Draw the whole live mode. `header` is the placeholder at the top of the page."""
     _restore_prefs()
-    header.markdown(ui.header_html("live", "Live simulation · PaySim format"), unsafe_allow_html=True)
+    header.markdown(ui.header_html("live", "PaySim format · every transaction scored as it arrives",
+                                   "Live simulation"), unsafe_allow_html=True)
     cols = st.columns([1.5, 1.2, 1.4, 3])
     with cols[0]:
         policy = render_policy_popover()

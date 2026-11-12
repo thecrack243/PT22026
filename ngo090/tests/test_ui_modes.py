@@ -45,6 +45,30 @@ def test_the_app_lands_on_live_simulation_without_errors():
     assert "Simulated time" in all_text(at)
 
 
+def test_the_sidebar_navigates_between_modes():
+    """The three modes are sidebar buttons: clicking one redraws the page in that mode."""
+    at = page()
+    nav = [b for b in at.sidebar.button if b.key and b.key.startswith("nav_")]
+    assert {b.key for b in nav} == {"nav_live", "nav_replay", "nav_testing"}
+    assert not at.exception
+
+    at.sidebar.button(key="nav_replay").click().run()
+    assert not at.exception
+    assert at.session_state["mode"] == "Historical replay"
+    assert "PaySim replay" in all_text(at)
+    at.sidebar.button(key="nav_testing").click().run()
+    assert not at.exception
+    assert at.session_state["mode"] == "Transaction testing"
+    assert "Single transaction" in all_text(at)
+
+
+def test_the_empty_live_charts_do_not_talk_about_the_replay():
+    """Live mode has no Start button, so its empty charts must not say 'Press Start'."""
+    at = page()
+    assert "Press Start" not in all_text(at)
+    assert "Waiting for the first simulated transactions" in all_text(at)
+
+
 def test_switching_modes_preserves_the_live_stream():
     from src.live import LiveStream, LiveSettings
     from src.decision import Policy
