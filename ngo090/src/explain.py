@@ -77,12 +77,17 @@ def _check_reference(engine: RiskEngine) -> pd.Series:
 def contributions(engine: RiskEngine, X: pd.DataFrame) -> np.ndarray:
     """Contribution of every input for every row (rows x inputs)."""
     ref = _check_reference(engine)
-    base = engine.raw_from_features(X)
-    out = np.zeros((len(X), X.shape[1]))
-    for j, col in enumerate(X.columns):
-        typical = X.copy()
-        typical[col] = ref[col]
-        out[:, j] = base - engine.raw_from_features(typical)
+    n, k = X.shape
+    cols = list(X.columns)
+    # Score the originals and all counterfactuals in ONE call. The engine pays a
+    # fixed cost per call of roughly 45 ms whatever the batch size, so one call
+    # for k+1 batches is several times faster than k+1 separate calls.
+    stacked = pd.concat([X] + [X.assign(**{col: ref[col]}) for col in cols], ignore_index=True)
+    raw = engine.raw_from_features(stacked)
+    base = raw[:n]
+    out = np.zeros((n, k))
+    for j in range(k):
+        out[:, j] = base - raw[(j + 1) * n:(j + 2) * n]
     return out
 
 
