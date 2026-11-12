@@ -33,3 +33,6 @@ venv/
 htmlcov/
 .DS_Store
 Thumbs.db
+
+# WorkBuddy session data
+/.workbuddy/
