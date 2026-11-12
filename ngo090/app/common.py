@@ -1,6 +1,7 @@
 """Pieces shared by every mode: loaders and the policy and cost settings."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,9 +15,11 @@ for _p in (str(ROOT), str(APP_DIR)):
 import streamlit as st  # noqa: E402
 
 from src.artifacts import load_engine, load_run  # noqa: E402
+from src.cases import CaseStore  # noqa: E402
 from src.decision import PRESETS, CostConfig, Policy  # noqa: E402
 
 MIN_EXPLAIN_RISK = 80.0     # the policy cannot flag anything below this risk (see the review slider)
+CASES_DB = "FRAUD_CASES_DB"  # environment override, used by tests and for throwaway databases
 
 
 # --------------------------------------------------------------------------- #
@@ -30,6 +33,18 @@ def get_engine(tag: str):
 @st.cache_data(show_spinner="Loading replay data...")
 def get_run(tag: str):
     return load_run(ROOT, tag)
+
+
+def cases_path() -> Path:
+    """Where investigation cases live: data/cases.db unless the environment says otherwise."""
+    override = os.environ.get(CASES_DB)
+    return Path(override) if override else ROOT / "data" / "cases.db"
+
+
+@st.cache_resource(show_spinner=False)
+def get_case_store(path: str) -> CaseStore:
+    """One store per database file, shared by every page and session."""
+    return CaseStore(path)
 
 
 # --------------------------------------------------------------------------- #

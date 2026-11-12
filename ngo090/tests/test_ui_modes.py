@@ -46,10 +46,10 @@ def test_the_app_lands_on_live_simulation_without_errors():
 
 
 def test_the_sidebar_navigates_between_modes():
-    """The three modes are sidebar buttons: clicking one redraws the page in that mode."""
+    """The three modes plus Cases are sidebar buttons: clicking one redraws the page."""
     at = page()
     nav = [b for b in at.sidebar.button if b.key and b.key.startswith("nav_")]
-    assert {b.key for b in nav} == {"nav_live", "nav_replay", "nav_testing"}
+    assert {b.key for b in nav} == {"nav_live", "nav_replay", "nav_testing", "nav_cases"}
     assert not at.exception
 
     at.sidebar.button(key="nav_replay").click().run()
@@ -60,6 +60,10 @@ def test_the_sidebar_navigates_between_modes():
     assert not at.exception
     assert at.session_state["mode"] == "Transaction testing"
     assert "Single transaction" in all_text(at)
+    at.sidebar.button(key="nav_cases").click().run()
+    assert not at.exception
+    assert at.session_state["mode"] == "Cases"
+    assert "Investigation cases" in all_text(at)
 
 
 def test_the_empty_live_charts_do_not_talk_about_the_replay():
@@ -115,6 +119,31 @@ def test_a_stream_from_an_older_version_is_upgraded_not_crashed():
     assert not at.exception
     assert stream.processed == stream.proc_count
     assert "processed" in all_text(at)
+
+
+def test_the_cases_page_clear_button_resets_the_filters(tmp_path, monkeypatch):
+    """Regression: Clear used to write to widget keys after their widgets were
+    instantiated, raising StreamlitAPIException. It now resets in a callback."""
+    from src.cases import CaseStore
+
+    monkeypatch.setenv("FRAUD_CASES_DB", str(tmp_path / "cases.db"))
+    CaseStore(tmp_path / "cases.db").create(txn_id=42, risk=91.0, decision="block",
+                                            amount=1234.5, tx_type="TRANSFER", source="test",
+                                            explanation="unit test")
+    at = page(mode="Cases")
+    assert not at.exception
+    assert any("C-0001" in b.label for b in at.button)
+
+    at.selectbox(key="case_status").select("investigating").run()
+    at.text_input(key="case_search").set_value("zzz").run()
+    assert not any("C-0001" in b.label for b in at.button)   # the filters actually filtered
+
+    at.button(key="case_clear").click().run()
+    assert not at.exception
+    assert at.selectbox(key="case_status").value == "All"
+    assert at.selectbox(key="case_priority").value == "All"
+    assert at.text_input(key="case_search").value == ""
+    assert any("C-0001" in b.label for b in at.button)       # the case is back
 
 
 def _engine():

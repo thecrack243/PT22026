@@ -11,7 +11,8 @@ import time
 import streamlit as st
 
 import ui
-from common import get_engine, popover, render_costs_popover, render_policy_popover
+from common import (cases_path, get_case_store, get_engine, popover, render_costs_popover,
+                    render_policy_popover)
 from src.decision import Policy
 from src.live import LiveSettings, LiveStream, clock_label
 from src.predict import predict_one
@@ -31,13 +32,19 @@ def _save_prefs() -> None:
 
 
 def _select_alert(txn_id: int) -> None:
-    """An alert was clicked. The pop-up is opened by render() on the next full run."""
-    st.session_state.alert_to_open = int(txn_id)
-    st.session_state.live_selected = int(txn_id)     # used by the inline fallback
+    """An alert was clicked: remember it, so the pop-up is drawn on every run until it is closed.
+
+    The dialog has to be re-created on each run, otherwise its own buttons (such as
+    "Open investigation case") would be thrown away together with the closed pop-up.
+    """
+    st.session_state.live_selected = int(txn_id)     # also used by the inline fallback
+    st.session_state.live_alert_open = int(txn_id)   # the pop-up stays up until it is closed
+    st.session_state.alert_to_open = int(txn_id)     # ask the next full run to draw it
 
 
 def _clear_alert() -> None:
     st.session_state.live_selected = None
+    st.session_state.live_alert_open = None
 
 
 def get_stream(engine) -> LiveStream:
@@ -90,6 +97,33 @@ def _prediction(engine, row, policy):
     return cache[int(row.id)]
 
 
+def case_action(row) -> None:
+    """Offer to keep this alert as an investigation case (stored on disk).
+
+    The alert itself is ephemeral: rows are trimmed and a restart forgets the
+    feed. A case is the analyst's durable copy, so it is written to SQLite here.
+    """
+    store = get_case_store(str(cases_path()))
+    existing = store.open_for(int(row.id))
+
+    st.markdown('<div class="fa-note" style="margin:14px 0 6px">Investigation</div>', unsafe_allow_html=True)
+    if existing is not None:
+        st.caption(f"Case {existing.case_id} · {existing.status_label} · {existing.priority_label} priority. "
+                   "Open it from Cases in the sidebar.")
+        return
+
+    flash = f"case_flash_{int(row.id)}"
+    if st.button("Open investigation case", key=f"open_case_{int(row.id)}", width="stretch",
+                 icon=":material/add_task:"):
+        case = store.open_for(int(row.id))           # clicked twice before the page redrew
+        if case is None:
+            case = store.create(int(row.id), float(row.risk), str(row.decision), str(row.reason),
+                                source="live", amount=float(row.amount), tx_type=str(row.type))
+        st.session_state[flash] = f"{case.case_id} opened · {case.priority_label} priority · saved on disk"
+    if flash in st.session_state:
+        st.success(st.session_state[flash])
+
+
 def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
     """Show one alert in a centered pop-up window with a close button (Escape or a click outside also close it)."""
     @st.dialog(f"Alert #{txn_id}", width="large")
@@ -106,6 +140,8 @@ def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
         engine = get_engine(tag)
         st.markdown(ui.alert_detail_html(row, _prediction(engine, row, policy), policy, show_truth, in_dialog=True),
                     unsafe_allow_html=True)
+        case_action(row)
+        st.button("Close alert", key=f"close_alert_{txn_id}", on_click=_clear_alert, width="stretch")
 
     _show()
 
@@ -167,9 +203,10 @@ def render(header, tag: str, run, engine) -> None:
 
     stream = get_stream(engine)
     st.session_state.live_tag = tag
-    pending = st.session_state.pop("alert_to_open", None)
-    if pending is not None and hasattr(st, "dialog"):
-        open_alert_popup(pending, policy, show_truth)
+    st.session_state.pop("alert_to_open", None)      # the full run the click asked for is happening
+    open_id = st.session_state.get("live_alert_open")
+    if open_id is not None and hasattr(st, "dialog"):
+        open_alert_popup(int(open_id), policy, show_truth)
 
     if hasattr(st, "fragment"):
         @st.fragment(run_every=TICK_SECONDS)

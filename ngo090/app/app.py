@@ -25,6 +25,7 @@ for _path in (str(_APP_DIR.parent), str(_APP_DIR)):
 import common                      # noqa: E402  (sets up the import paths)
 import streamlit as st             # noqa: E402
 
+import mode_cases                  # noqa: E402
 import mode_live                   # noqa: E402
 import mode_replay                 # noqa: E402
 import mode_testing                # noqa: E402
@@ -32,9 +33,11 @@ import ui                          # noqa: E402
 from src.artifacts import discover_runs  # noqa: E402
 
 REPLAY, LIVE, TESTING = "Historical replay", "Live simulation", "Transaction testing"
+CASES = "Cases"                     # the workspace page, not a simulation mode
 MODES = (LIVE, REPLAY, TESTING)    # the live feed is what greets the analyst
-SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing"}
-ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":material/science:"}
+SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases"}
+ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":material/science:",
+        CASES: ":material/folder_shared:"}
 
 st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout="wide",
                    initial_sidebar_state="expanded")
@@ -45,7 +48,7 @@ def _switch_to(mode: str) -> None:
     st.session_state.mode = mode
 
 
-def render_sidebar() -> str:
+def render_sidebar(store) -> str:
     """The three modes live in the sidebar; the page itself stays one canvas."""
     st.session_state.setdefault("mode", MODES[0])
     with st.sidebar:
@@ -56,6 +59,15 @@ def render_sidebar() -> str:
             st.button(mode, key=f"nav_{SLUG[mode]}", icon=ICON[mode], width="stretch",
                       type="primary" if st.session_state.mode == mode else "secondary",
                       on_click=_switch_to, args=(mode,))
+
+        st.markdown('<div class="fa-root"><div class="fa-side-label" style="margin-top:16px">Workspace</div></div>',
+                    unsafe_allow_html=True)
+        active = store.counts()["active"]           # cases still being worked on
+        label = f"Cases · {active}" if active else CASES
+        st.button(label, key=f"nav_{SLUG[CASES]}", icon=ICON[CASES], width="stretch",
+                  type="primary" if st.session_state.mode == CASES else "secondary",
+                  on_click=_switch_to, args=(CASES,),
+                  help="Alerts an analyst kept, stored in a local SQLite database.")
     return st.session_state.mode
 
 
@@ -108,7 +120,8 @@ def main() -> None:
         st.stop()
 
     header = st.empty()                             # each mode fills in its own header
-    mode = render_sidebar()
+    store = common.get_case_store(str(common.cases_path()))
+    mode = render_sidebar(store)
     if mode != REPLAY:
         st.session_state["playing"] = False         # a replay does not keep running in the background
 
@@ -123,6 +136,8 @@ def main() -> None:
             mode_replay.render(header, tag, run)
         elif mode == LIVE:
             mode_live.render(header, tag, run, engine)
+        elif mode == CASES:
+            mode_cases.render(header, store)
         else:
             mode_testing.render(header, tag, run, engine)
 

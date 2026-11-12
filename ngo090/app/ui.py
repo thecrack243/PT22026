@@ -165,6 +165,21 @@ box-shadow:0 8px 22px rgba(37,99,235,.32) !important;transform:none;}
 section[data-testid="stSidebar"] .stButton>button p{font-size:14px !important;font-weight:600 !important;}
 section[data-testid="stSidebar"] .stButton>button>div{justify-content:flex-start !important;width:100%;}
 @media (prefers-reduced-motion:reduce){section[data-testid="stSidebar"] .stButton>button{transition:none !important;}}
+.fa-tag.open{background:rgba(59,130,246,.16);color:#93c5fd;border:1px solid rgba(59,130,246,.38);}
+.fa-tag.investigating{background:rgba(245,158,11,.16);color:#fcd34d;border:1px solid rgba(245,158,11,.4);}
+.fa-tag.confirmed_fraud{background:rgba(244,63,94,.18);color:#fda4af;border:1px solid rgba(244,63,94,.4);}
+.fa-tag.false_positive{background:rgba(34,197,94,.14);color:#86efac;border:1px solid rgba(34,197,94,.34);}
+.fa-tag.closed{background:rgba(148,163,184,.14);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
+.fa-tag.prio-urgent{background:rgba(244,63,94,.16);color:#fda4af;border:1px solid rgba(244,63,94,.36);}
+.fa-tag.prio-high{background:rgba(245,158,11,.14);color:#fcd34d;border:1px solid rgba(245,158,11,.34);}
+.fa-tag.prio-medium{background:rgba(59,130,246,.14);color:#93c5fd;border:1px solid rgba(59,130,246,.32);}
+.fa-tag.prio-low{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.26);}
+.fa-case-text{font-size:14px;color:#dbe6f8;line-height:1.55;background:rgba(255,255,255,.03);
+border:1px solid rgba(96,140,220,.16);border-radius:12px;padding:12px 14px;}
+[class*="st-key-case_"] button{width:100% !important;justify-content:flex-start !important;text-align:left !important;
+min-height:46px;padding:4px 14px !important;font-weight:500 !important;font-size:13.5px !important;}
+[class*="st-key-case_"] button>div{justify-content:flex-start !important;width:100%;}
+[class*="st-key-case_"] button p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px !important;}
 </style>
 """
 
@@ -451,7 +466,8 @@ def header_html(state: str, period: str, title: str) -> str:
     """Page heading: the mode name on the left, the data window and status on the right."""
     label, dot = {"ready": ("Ready", "idle"), "playing": ("Replay running", "live"),
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
-                  "testing": ("Ready to test", "live"), "live": ("Simulated live", "live")}[state]
+                  "testing": ("Ready to test", "live"), "live": ("Simulated live", "live"),
+                  "cases": ("Stored on disk", "done")}[state]
     return compact(
         f'<div class="fa-root"><div class="fa-head"><div>'
         f'<div class="fa-ptitle">{escape(title)}</div>'
@@ -771,3 +787,68 @@ def alert_hint_html() -> str:
 def alerts_title_html(n_alerts: int) -> str:
     return compact(f'<div class="fa-root"><div class="fa-ctitle" style="margin-bottom:4px">{icon("bell", "#5aa2ff", 24)}'
                    f'<span>Alerts</span><div class="fa-legend"><span>{n_alerts:,} raised so far</span></div></div></div>')
+
+# --------------------------------------------------------------------------- #
+# Investigation cases
+# --------------------------------------------------------------------------- #
+_STATUS_LABEL = {"open": "Open", "investigating": "Investigating", "confirmed_fraud": "Confirmed fraud",
+                 "false_positive": "False positive", "closed": "Closed"}
+_PRIORITY_LABEL = {"low": "Low", "medium": "Medium", "high": "High", "urgent": "Urgent"}
+
+
+def _stamp(value: str) -> str:
+    """UTC timestamp from the database, shown in the analyst's local time."""
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(value).astimezone().strftime("%d %b %Y, %H:%M")
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def case_label(case) -> str:
+    """One line per case in the list: enough to decide whether to open it."""
+    return (f"{case.case_id}  ·  #{int(case.txn_id)}  ·  risk {case.risk:.1f}  ·  "
+            f"{case.decision_label}  ·  {_STATUS_LABEL[case.status]}  ·  {_PRIORITY_LABEL[case.priority]}")
+
+
+def cases_overview_html(counts: dict) -> str:
+    """Status counters above the list."""
+    order = ("open", "investigating", "confirmed_fraud", "false_positive", "closed")
+    pills = "".join(
+        f'<div class="fa-pill"><i class="fa-dot" style="background:{_STATUS_DOT[s]}"></i>'
+        f'{_STATUS_LABEL[s]} <b>{counts.get(s, 0):,}</b></div>' for s in order)
+    pills += f'<div class="fa-pill">All cases <b>{counts.get("all", 0):,}</b></div>'
+    return compact(f'<div class="fa-root"><div class="fa-pills2">{pills}</div></div>')
+
+
+_STATUS_DOT = {"open": "#60a5fa", "investigating": "#fbbf24", "confirmed_fraud": "#fb7185",
+               "false_positive": "#4ade80", "closed": "#94a3b8"}
+
+
+def case_detail_html(case) -> str:
+    """Everything known about a case, above the editable fields in the pop-up."""
+    facts = [("Case", case.case_id), ("Transaction", f"#{int(case.txn_id)}"),
+             ("Amount", f"{case.amount:,.2f}" if case.amount else "-"),
+             ("Type", (case.tx_type or "-").replace("_", " ").title()),
+             ("Source", case.source.title()), ("Priority", _PRIORITY_LABEL[case.priority]),
+             ("Created", _stamp(case.created_at)), ("Updated", _stamp(case.updated_at))]
+    kv = "".join(f"<div><span>{k}</span><b>{escape(str(v))}</b></div>" for k, v in facts)
+    explanation = escape(case.explanation) if case.explanation else "No explanation was recorded."
+    notes = escape(case.notes).replace("\n", "<br>") if case.notes else "No notes yet."
+    return compact(
+        f'<div class="fa-root"><div class="fa-detail-head"><h3>{case.case_id} &middot; transaction #{int(case.txn_id)}</h3>'
+        f'<div class="fa-pills" style="gap:8px"><span class="fa-tag {case.status}">{_STATUS_LABEL[case.status]}</span>'
+        f'<span class="fa-tag prio-{case.priority}">{_PRIORITY_LABEL[case.priority]} priority</span></div></div>'
+        f'<div class="fa-klabel">Risk score</div>'
+        f'<div class="fa-risk-big" style="font-size:38px">{case.risk:.1f}<small> / 100</small></div>'
+        f'<div class="fa-riskbar"><span class="pt" style="left:{min(case.risk, 100):.1f}%"></span></div>'
+        f'<div class="fa-kv">{kv}</div>'
+        f'<div class="fa-sub2">Main explanation</div><div class="fa-case-text">{explanation}</div>'
+        f'<div class="fa-sub2">Analyst notes</div><div class="fa-case-text">{notes}</div></div>')
+
+
+def cases_empty_html() -> str:
+    return compact('<div class="fa-root"><div class="fa-card fa-empty">'
+                   f'{icon("list", "#5aa2ff", 34)}<h3>No investigation cases yet</h3>'
+                   '<p>Open an alert in the live simulation and choose <b>Open investigation case</b>. '
+                   'Cases are stored on disk, so they are still here after a restart.</p></div></div>')
