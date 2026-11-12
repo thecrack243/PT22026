@@ -125,7 +125,7 @@ def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show
 
     view = stream.view(policy, costs)
     strip = ui.live_status_strip(view, clock_label(stream.minute), stream.avg_ms, stream.recent_throughput,
-                                 stream.processed, settings)
+                                 stream.processed)
     st.markdown(ui.live_dashboard_html(view, strip), unsafe_allow_html=True)
 
     col_feed, col_alerts = st.columns([1.55, 1])

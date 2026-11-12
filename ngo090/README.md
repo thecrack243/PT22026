@@ -169,15 +169,15 @@ The replay re-decides everything from the current policy on every frame, so movi
 
 ### 7.2 Live simulation
 
-A generated stream of PaySim-format transactions, scored and decided as it arrives. There is no start or stop: the clock runs and transactions keep coming. Everything on this page is labelled as simulated: the header says "Simulated live", and the status strip opens with a "Simulated data" badge — nothing here is real money, and the true labels exist only because the traffic is generated.
+A generated stream of PaySim-format transactions, scored and decided as it arrives. There is no start or stop: the clock runs and transactions keep coming. The header labels the page "Simulated live" — nothing here is real money, and the true labels exist only because the traffic is generated.
 
 The generator draws its type mix, amounts and receiver balances from the replayed PaySim window, so live traffic looks like the traffic the engine was validated on: about a quarter of scored transactions land above risk 80, close to the replay's 27%, and the review queue fills at a realistic pace.
 
 - The simulated clock advances 1–10 simulated minutes per real second and starts at day 1, 08:00. If the tab was in the background (or the machine slept), the missed time is caught up with the clock capped at one simulated day, and reported in a "while you were away" toast.
-- **Simulator settings** live in a popover and are echoed in the status strip (volume, fraud rate, speed, active scenarios). Raising the fraud rate above 1% shows a warning: real PaySim fraud is about 0.13%, so the metrics on screen look far better than they would in production.
+- **Simulator settings** live in a popover. Raising the fraud rate above 1% shows a warning there: real PaySim fraud is about 0.13%, so the metrics on screen look far better than they would in production.
 - **Decisions are final.** A decision is made when the transaction arrives and never changes. Moving a threshold only affects what arrives next, as in a real system. This is the opposite of the replay, deliberately.
-- **Decision vs truth.** The live feed separates the engine's decision (made at arrival) from the true label (retrospective, simulator-only), and the alert detail states that the label is never shown to the engine.
-- The dashboard mirrors the replay one, plus a status strip (simulated-data badge, clock, generator settings, performance: ms per transaction, arriving rate and total processed, drift state, review queue usage) and a clickable alert list; clicking an alert opens the transaction, its score and the reasons for it. The stream survives switching modes: it keeps its rows and clock and resumes where it left off.
+- **Decision vs truth.** The live feed shows the engine's decision at arrival next to a "True label" column (retrospective, simulator-only), and the alert detail states that the label is never shown to the engine.
+- The dashboard mirrors the replay one, plus a status strip (clock, performance: ms per transaction, arriving rate and total processed, drift state, review queue usage) and a clickable alert list; clicking an alert opens the transaction, its score and the reasons for it. The stream survives switching modes: it keeps its rows and clock and resumes where it left off.
 
 ### 7.3 Transaction testing
 
