@@ -418,7 +418,7 @@ def card(title: str, body: str, ic: str = "bars", legend: str = "") -> str:
 def header_html(state: str, period: str) -> str:
     label, dot = {"ready": ("Ready", "idle"), "playing": ("Replay running", "live"),
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
-                  "testing": ("Ready to test", "live"), "live": ("Live", "live")}[state]
+                  "testing": ("Ready to test", "live"), "live": ("Simulated live", "live")}[state]
     return compact(
         f'<div class="fa-root"><div class="fa-head"><div class="fa-brand"><div class="fa-logo">{icon("shield-check", "#7db8ff", 32)}</div>'
         f'<div><div class="fa-title">Fraud Audit <span>&middot; Risk Monitor</span></div>'
@@ -606,7 +606,8 @@ def scored_table_html(rows, limit: int = 25) -> str:
 # --------------------------------------------------------------------------- #
 # Live simulation (mode 2)
 # --------------------------------------------------------------------------- #
-def live_status_strip(view: dict, clock: str, avg_ms: float, rate: float) -> str:
+def live_status_strip(view: dict, clock: str, avg_ms: float, rate: float,
+                      processed: int = 0, settings=None) -> str:
     """Compact system health under the title: clock, speed, drift and review queue."""
     drift_text = {"stable": ("Traffic drift: stable", "live"), "watch": ("Traffic drift: watch", "idle"),
                   "drift": ("Traffic drift: detected", "bad"), "warming": ("Traffic drift: warming up", "done")}[view["drift"]]
@@ -615,11 +616,22 @@ def live_status_strip(view: dict, clock: str, avg_ms: float, rate: float) -> str
     dot = {"bad": '<i class="fa-dot" style="background:#f43f5e;box-shadow:0 0 10px #f43f5e"></i>'}.get(
         drift_text[1], f'<i class="fa-dot {drift_text[1]}"></i>')
     timing = f"{avg_ms:.1f} ms" if avg_ms < 10 else f"{avg_ms:.0f} ms"
-    pills = [
-        f'<div class="fa-pill"><i class="fa-dot live"></i>Engine operational</div>',
-        f'<div class="fa-pill">Simulated time <b>{escape(clock)}</b></div>',
-        f'<div class="fa-pill" title="Engine time per transaction in the last batches, and the rate at which transactions are arriving">'
-        f'Processing <b>{timing}</b> per transaction &middot; <b>{rate:.0f}</b> tx/s arriving</div>',
+    sim = (f'<div class="fa-pill" title="Nothing here is real money. Every transaction is produced by the '
+           f'PaySim-based generator; the labels are known only because this is a simulation.">'
+           f'<i class="fa-dot idle"></i>Simulated data</div>')
+    pills = [sim,
+             f'<div class="fa-pill"><i class="fa-dot live"></i>Engine operational</div>',
+             f'<div class="fa-pill">Simulated time <b>{escape(clock)}</b></div>']
+    if settings is not None:
+        pattern = " + new pattern" if settings.new_pattern else ""
+        shift = " + market shift" if settings.market_shift else ""
+        pills.append(f'<div class="fa-pill" title="Current generator settings (edit them in the Simulator popover)">'
+                     f'Generator <b>{settings.volume_per_hour}</b>/h &middot; <b>{settings.fraud_rate:.1%}</b> fraud'
+                     f' &middot; <b>{settings.sim_minutes_per_second:g}</b> min/s{pattern}{shift}</div>')
+    pills += [
+        f'<div class="fa-pill" title="Engine time per transaction in the last batches, the rate at which transactions '
+        f'are arriving, and the total processed since the session started (in-memory rows are trimmed beyond 100,000)">'
+        f'Performance <b>{timing}</b>/txn &middot; <b>{rate:.0f}</b> tx/s &middot; <b>{processed:,}</b> processed</div>',
         f'<div class="fa-pill" title="Population Stability Index of amounts and empty receivers: last 3 simulated hours '
         f'against the first 3 hours of the session. Under 0.10 stable, 0.10-0.25 watch, above 0.25 drift.">'
         f'{dot}{drift_text[0]}{psi}</div>',
@@ -639,7 +651,7 @@ def feed_html(rows, show_truth: bool) -> str:
     from src.live import minute_label
     if len(rows) == 0:
         return compact(f'<div class="fa-root">{card("Live transactions", "<div class=fa-note>Waiting for the first transactions...</div>", "list")}</div>')
-    head = ["Time", "Type", "Amount", "Risk", "Decision"] + (["Truth"] if show_truth else [])
+    head = ["Time", "Type", "Amount", "Risk", "Decision"] + (["True label"] if show_truth else [])
     body = []
     for r in rows.itertuples():
         label, _ = DECISION_TEXT[r.decision]
@@ -652,7 +664,9 @@ def feed_html(rows, show_truth: bool) -> str:
         body.append(f"<tr>{cells}</tr>")
     table = (f'<div class="fa-tablewrap"><table class="fa-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in head)}'
              f'</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
-    legend = '<span>Every transaction, newest first</span>'
+    legend = ('<span>Every transaction, newest first</span>'
+              '<span><b>Decision</b> is what the engine concluded when the transaction arrived; '
+              '<b>true label</b> is known only because this is a simulation</span>')
     return compact(f'<div class="fa-root">{card("Live transactions", table, "list", legend)}</div>')
 
 
@@ -685,7 +699,7 @@ def alert_detail_html(row, prediction, policy, show_truth: bool, in_dialog: bool
     if show_truth:
         tag = '<span class="fa-tag fraud">Fraud</span>' if row.isFraud == 1 else '<span class="fa-tag legit">Legitimate</span>'
         extra = f" &middot; {escape(row.pattern)}" if row.isFraud == 1 and row.pattern else ""
-        truth = (f'<div class="fa-sub2">Simulator truth</div>{tag}{extra}'
+        truth = (f'<div class="fa-sub2">True label (simulator only)</div>{tag}{extra}'
                  '<div class="fa-note">Known only to the simulator. The engine never sees it, and in real life it '
                  'arrives days later.</div>')
     pill = f'<span class="fa-tag {row.decision}" style="font-size:14px;padding:5px 16px">{label}</span>'

@@ -54,6 +54,9 @@ def render_simulator_popover() -> tuple[LiveSettings, bool]:
         fraud = st.slider("Fraud rate (%)", 0.5, 10.0, 3.0, 0.5, key="sim_fraud",
                           help="Share of generated transactions that are fraud. Real fraud is far rarer; "
                                "a higher rate makes the demo easier to follow.")
+        if fraud > 1.0:
+            st.caption(":orange[Real PaySim fraud is about **0.13%**. At {:.1f}% the fraud caught, recall and "
+                       "money-saved numbers on this page look far better than they would in production.]".format(fraud))
         speed = st.slider("Simulated minutes per real second", 1.0, 10.0, 2.0, 0.5, key="sim_speed")
         new_pattern = st.toggle("Inject a new fraud pattern", value=False, key="sim_new_pattern",
                                 help="Adds small transfers between accounts that already hold money. The engine "
@@ -61,10 +64,11 @@ def render_simulator_popover() -> tuple[LiveSettings, bool]:
                                      "of these it misses.")
         shift = st.toggle("Simulate a market shift", value=False, key="sim_shift",
                           help="Amounts become 10x larger and receivers are new accounts. The drift monitor compares "
-                               "the last 6 simulated hours with the start of the session and should react.")
+                               "the last 3 simulated hours with the start of the session and should react.")
         show_truth = st.toggle("Show the true label", value=True, key="sim_show_truth",
-                               help="Adds a Truth column. In real life the label is not known when a "
-                                    "transaction arrives.")
+                               help="Adds a true-label column to the live feed. In real life the label is not "
+                                    "known when a transaction arrives - it is only available here because the "
+                                    "traffic is simulated.")
     return LiveSettings(int(volume), fraud / 100.0, bool(new_pattern), float(speed), bool(shift)), bool(show_truth)
 
 
@@ -87,9 +91,13 @@ def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
         stream = st.session_state.get("live_stream")
         row = stream.get(txn_id) if stream is not None else None
         if row is None:
-            st.info("This alert is no longer available.")
+            st.info("This alert is no longer available (it may have been trimmed from the feed).")
             return
-        engine = get_engine(st.session_state.live_tag)
+        tag = st.session_state.get("live_tag")
+        if tag is None:
+            st.info("The session was reset. Close this window and open the alert again.")
+            return
+        engine = get_engine(tag)
         st.markdown(ui.alert_detail_html(row, _prediction(engine, row, policy), policy, show_truth, in_dialog=True),
                     unsafe_allow_html=True)
 
@@ -100,12 +108,18 @@ def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show
     """Process what arrived since the last tick and draw the whole live screen."""
     if st.session_state.get("alert_to_open") is not None and hasattr(st, "dialog"):
         st.rerun()                                  # a full run opens the pop-up (see render)
-    info = stream.advance(policy, settings=settings)
+    try:
+        info = stream.advance(policy, settings=settings)
+    except Exception as exc:                        # keep the page alive and say what broke
+        st.error(f"The live simulator stopped while processing new transactions: {exc}")
+        return
     if info["caught_up_minutes"] >= AWAY_MINUTES and hasattr(st, "toast"):
-        st.toast(f"While you were away, {info['new']:,} transactions arrived and {info['new_alerts']:,} raised an alert.")
+        st.toast(f"While you were away, {info['new']:,} simulated transactions arrived "
+                 f"and {info['new_alerts']:,} raised an alert.")
 
     view = stream.view(policy, costs)
-    strip = ui.live_status_strip(view, clock_label(stream.minute), stream.avg_ms, stream.recent_throughput)
+    strip = ui.live_status_strip(view, clock_label(stream.minute), stream.avg_ms, stream.recent_throughput,
+                                 stream.processed, settings)
     st.markdown(ui.live_dashboard_html(view, strip), unsafe_allow_html=True)
 
     col_feed, col_alerts = st.columns([1.55, 1])

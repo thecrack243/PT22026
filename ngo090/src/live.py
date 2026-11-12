@@ -71,6 +71,7 @@ class LiveStream:
         self.budget = 0.0
         self.proc_ms_sum = 0.0
         self.proc_count = 0
+        self.processed = 0               # all-time total; rows are trimmed, this is not
         self.recent_throughput = 0.0
 
     # ------------------------------------------------------------------ #
@@ -105,6 +106,7 @@ class LiveStream:
             new["proc_ms"] = elapsed_ms / len(new)
             self.proc_ms_sum += elapsed_ms
             self.proc_count += len(new)
+            self.processed += len(new)
             new_alerts = int((new["decision"] != APPROVE).sum())
             self.rows = new if self.rows.empty else pd.concat([self.rows, new], ignore_index=True)
             if len(self.rows) > MAX_ROWS:
