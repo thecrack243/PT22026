@@ -163,6 +163,7 @@ section[data-testid="stSidebar"] .stButton>button[kind="primary"]{background:lin
 border:1px solid rgba(125,184,255,.42) !important;color:#fff !important;
 box-shadow:0 8px 22px rgba(37,99,235,.32) !important;transform:none;}
 section[data-testid="stSidebar"] .stButton>button p{font-size:14px !important;font-weight:600 !important;}
+section[data-testid="stSidebar"] .stButton>button>div{justify-content:flex-start !important;width:100%;}
 @media (prefers-reduced-motion:reduce){section[data-testid="stSidebar"] .stButton>button{transition:none !important;}}
 </style>
 """
