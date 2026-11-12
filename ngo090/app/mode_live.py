@@ -44,7 +44,13 @@ def get_stream(engine) -> LiveStream:
     """The running simulation of this browser session (created on first use)."""
     if "live_stream" not in st.session_state:
         st.session_state.live_stream = LiveStream(engine)
-    return st.session_state.live_stream
+    stream = st.session_state.live_stream
+    # A stream created by an older version of the app can still be alive in this
+    # browser session after a code reload. Give it anything newer versions added,
+    # instead of crashing the page.
+    if not hasattr(stream, "processed"):
+        stream.processed = int(getattr(stream, "proc_count", 0))
+    return stream
 
 
 def render_simulator_popover() -> tuple[LiveSettings, bool]:
