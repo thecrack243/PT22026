@@ -200,25 +200,33 @@ def render(header, tag: str, run) -> None:
                 st.rerun()                          # refresh the buttons and header
 
         live()
-        render_advisor(replay, risk, cfg)
+        render_advisor(replay, risk, steps, cfg)
     else:                                           # older Streamlit: rerun the whole page
         finished = tick(len(steps))
         draw_dashboard(replay, risk, reason, steps, cfg)
-        render_advisor(replay, risk, cfg)
+        render_advisor(replay, risk, steps, cfg)
         if st.session_state.playing or finished:
             time.sleep(cfg["speed"])
             st.rerun()
     render_help()
 
 
-def render_advisor(replay, risk, cfg) -> None:
+def render_advisor(replay, risk, steps, cfg) -> None:
     """Optional cost curves and a recommended policy for the replay on screen."""
     if not st.toggle("Show the policy advisor", value=False, key="advisor_on",
-                     help="Tries many auto-block and review-capacity settings on the replayed transactions "
+                     help="Tries many auto-block and review-capacity settings on the hours replayed so far "
                           "and shows which one earns the most with your costs."):
         return
+    # Only the hours already replayed: advising from hours the analyst has not
+    # reached yet would leak the future into the recommendation.
+    pos = min(st.session_state.pos, len(steps))
+    if pos == 0:
+        st.caption("Start the replay first: the advisor needs at least one replayed hour.")
+        return
+    n_seen = int(np.searchsorted(replay["step"].to_numpy(), int(steps[pos - 1]), side="right"))
     with st.spinner("Trying policies..."):
-        rec = recommend_policy(replay, risk, cfg["costs"], cfg["policy"])
+        rec = recommend_policy(replay.iloc[:n_seen].reset_index(drop=True), risk[:n_seen],
+                               cfg["costs"], cfg["policy"])
     st.session_state.advisor_rec = (rec.best_block, rec.best_capacity)
     current_block = 100.0 if cfg["policy"].block_threshold == float("inf") else cfg["policy"].block_threshold
     st.markdown(ui.advisor_html(rec, current_block, cfg["policy"].daily_capacity), unsafe_allow_html=True)
