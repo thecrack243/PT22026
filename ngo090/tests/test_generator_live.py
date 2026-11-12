@@ -35,7 +35,7 @@ def test_fraud_follows_the_chosen_pattern():
     mixed = gen.generate(0, 3000, GeneratorConfig(volume_per_hour=300, fraud_rate=0.1, new_pattern=True))
     small = mixed[mixed["pattern"] == PATTERN_SMALL]
     assert len(small) > 0 and set(small["type"]) == {"TRANSFER"} and (small["amount"] <= 20_000).all()
-    assert (small["oldbalanceDest"] == 0).all()
+    assert (small["oldbalanceDest"] > 0).all()                             # established receivers: the engine misses these
     assert (base[base["isFraud"] == 0]["pattern"] == "").all()
 
 
@@ -88,8 +88,9 @@ def test_a_policy_change_only_affects_later_transactions():
 
 def test_long_absence_is_capped_and_runs_are_reproducible():
     s = LiveStream(ENGINE, seed=8, now=0.0, settings=LiveSettings(volume_per_hour=60))
-    info = s.advance(NEVER, now=100_000.0)
-    assert info["skipped_minutes"] > 0 and info["caught_up_minutes"] <= live.MAX_CATCHUP_MINUTES
+    info = s.advance(NEVER, now=100_000.0)                             # 27 hours away from the screen
+    assert info["caught_up_minutes"] == live.MAX_CATCHUP_MINUTES       # at most one simulated day passes
+    assert s.minute == live.SIM_START_MINUTE + live.MAX_CATCHUP_MINUTES
     a = LiveStream(ENGINE, seed=9, now=0.0); b = LiveStream(ENGINE, seed=9, now=0.0)
     for t in (10.0, 25.0, 40.0):
         a.advance(NEVER, now=t); b.advance(NEVER, now=t)
@@ -153,7 +154,7 @@ def test_drift_monitor_is_quiet_for_stable_traffic_and_reacts_to_a_shift():
         s.advance(NEVER, now=float(t))
     for t in range(81, 121):                                            # 6 more hours of the same traffic
         s.advance(NEVER, now=float(t) * 3)
-    assert s.baseline is not None and len(s.baseline) == live.BASELINE_SIZE
+    assert s.view(NEVER, CostConfig())["psi"] is not None                  # both 3-hour windows are populated
     stable = s.view(NEVER, CostConfig())
     assert stable["drift"] in ("stable", "watch") and stable["psi"] is not None and stable["psi"] < 0.25
     shifted = LiveSettings(volume_per_hour=600, fraud_rate=0.02, market_shift=True)

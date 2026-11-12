@@ -585,7 +585,7 @@ def scored_table_html(rows, limit: int = 25) -> str:
     """Highest-risk transactions of a scored file."""
     top = rows.sort_values("risk", ascending=False).head(limit)
     labelled = "isFraud" in rows.columns and rows["isFraud"].notna().any()
-    head = ["Row", "Type", "Amount", "Risk", "Main reason", "Decision"] + (["Actually"] if labelled else [])
+    head = ["Row", "Type", "Amount", "Risk", "Main reason", "Decision"] + (["Outcome"] if labelled else [])
     body = []
     for r in top.itertuples():
         label, _ = DECISION_TEXT[r.decision]
@@ -598,7 +598,9 @@ def scored_table_html(rows, limit: int = 25) -> str:
         body.append(f"<tr>{cells}</tr>")
     table = (f'<div class="fa-tablewrap"><table class="fa-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in head)}'
              f'</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
-    return compact(f'<div class="fa-root">{card(f"Highest-risk transactions (top {len(top)})", table, "list")}</div>')
+    title = (f"Highest-risk transactions (top {len(top)} of {len(rows)})"
+             if len(top) < len(rows) else "Scored transactions")
+    return compact(f'<div class="fa-root">{card(title, table, "list")}</div>')
 
 
 # --------------------------------------------------------------------------- #
@@ -606,17 +608,21 @@ def scored_table_html(rows, limit: int = 25) -> str:
 # --------------------------------------------------------------------------- #
 def live_status_strip(view: dict, clock: str, avg_ms: float, rate: float) -> str:
     """Compact system health under the title: clock, speed, drift and review queue."""
-    drift_text = {"stable": ("Drift stable", "live"), "watch": ("Drift: watch", "idle"),
-                  "drift": ("Drift detected", "bad"), "warming": ("Drift: warming up", "done")}[view["drift"]]
+    drift_text = {"stable": ("Traffic drift: stable", "live"), "watch": ("Traffic drift: watch", "idle"),
+                  "drift": ("Traffic drift: detected", "bad"), "warming": ("Traffic drift: warming up", "done")}[view["drift"]]
     psi = f' ({view["psi"]:.2f})' if view["psi"] is not None else ""
     used, cap = view["reviews_today"], view["capacity"]
     dot = {"bad": '<i class="fa-dot" style="background:#f43f5e;box-shadow:0 0 10px #f43f5e"></i>'}.get(
         drift_text[1], f'<i class="fa-dot {drift_text[1]}"></i>')
+    timing = f"{avg_ms:.1f} ms" if avg_ms < 10 else f"{avg_ms:.0f} ms"
     pills = [
         f'<div class="fa-pill"><i class="fa-dot live"></i>Engine operational</div>',
         f'<div class="fa-pill">Simulated time <b>{escape(clock)}</b></div>',
-        f'<div class="fa-pill">Processing <b>{avg_ms:.0f} ms</b> per transaction &middot; <b>{rate:.0f}</b> tx/s</div>',
-        f'<div class="fa-pill">{dot}{drift_text[0]}{psi}</div>',
+        f'<div class="fa-pill" title="Engine time per transaction in the last batches, and the rate at which transactions are arriving">'
+        f'Processing <b>{timing}</b> per transaction &middot; <b>{rate:.0f}</b> tx/s arriving</div>',
+        f'<div class="fa-pill" title="Population Stability Index of amounts and empty receivers: last 3 simulated hours '
+        f'against the first 3 hours of the session. Under 0.10 stable, 0.10-0.25 watch, above 0.25 drift.">'
+        f'{dot}{drift_text[0]}{psi}</div>',
         f'<div class="fa-pill">Review queue today <b>{used}</b> of <b>{cap}</b></div>',
     ]
     return compact(f'<div class="fa-root"><div class="fa-pills2">{"".join(pills)}</div></div>')

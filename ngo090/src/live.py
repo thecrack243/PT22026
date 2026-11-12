@@ -22,7 +22,7 @@ import pandas as pd
 from src.decision import APPROVE, BLOCK, REVIEW, CostConfig, Policy
 from src.engine import RiskEngine
 from src.generator import GeneratorConfig, TransactionGenerator
-from src.drift import MIN_SAMPLES, drift_status, psi_vs_baseline
+from src.drift import MIN_SAMPLES, drift_status, psi_binary, psi_vs_baseline
 from src.monitor import build_view
 from src.processing import score_clean
 
@@ -31,8 +31,7 @@ MINUTES_PER_DAY = 24 * 60
 MAX_CATCHUP_MINUTES = MINUTES_PER_DAY     # a long absence is capped at one simulated day
 MAX_ROWS = 100_000                 # oldest rows are dropped beyond this
 VIEW_HOURS = 36                    # hours shown on the charts
-BASELINE_SIZE = 400                # scored transactions that define "normal" for the drift check
-DRIFT_HOURS = 6                    # recent hours compared with that baseline
+DRIFT_HOURS = 3                    # recent hours compared with the three hours before them
 NO_TIME = 0.0
 
 
@@ -70,12 +69,9 @@ class LiveStream:
         self._clock = float(SIM_START_MINUTE)   # simulated time as a fraction of a minute
         self._last_wall = time.time() if now is None else now
         self.budget = 0.0
-        self.skipped_minutes = 0
         self.proc_ms_sum = 0.0
         self.proc_count = 0
         self.recent_throughput = 0.0
-        self.baseline: np.ndarray | None = None      # risk scores of the session's first transactions
-        self._baseline_parts: list[np.ndarray] = []
 
     # ------------------------------------------------------------------ #
     def advance(self, policy: Policy, now: float | None = None, settings: LiveSettings | None = None) -> dict:
@@ -85,17 +81,16 @@ class LiveStream:
             self.settings = settings
         dt = max(now - self._last_wall, 0.0)
         self._last_wall = now
-        self._clock += dt * self.settings.sim_minutes_per_second
+        # The clock is capped like the generation: if the laptop slept for hours, an
+        # uncapped clock jumps millions of simulated days forward and every timestamp
+        # in the dashboard becomes nonsense. At most one simulated day passes while
+        # nobody is watching; the session simply resumes from there.
+        self._clock += min(dt * self.settings.sim_minutes_per_second, float(MAX_CATCHUP_MINUTES))
         target = int(self._clock)
 
-        skipped = 0
-        if target - self.minute > MAX_CATCHUP_MINUTES:
-            skipped = target - self.minute - MAX_CATCHUP_MINUTES
-            self.minute += skipped
-            self.skipped_minutes += skipped
         start_minute, caught_up = self.minute, target - self.minute
         if caught_up <= 0:
-            return {"new": 0, "new_alerts": 0, "caught_up_minutes": 0, "skipped_minutes": skipped}
+            return {"new": 0, "new_alerts": 0, "caught_up_minutes": 0}
 
         new = self.generator.generate(start_minute, target, self.settings.generator_config())
         self.minute = target
@@ -110,24 +105,42 @@ class LiveStream:
             new["proc_ms"] = elapsed_ms / len(new)
             self.proc_ms_sum += elapsed_ms
             self.proc_count += len(new)
-            self._collect_baseline(risk[applicable])
             new_alerts = int((new["decision"] != APPROVE).sum())
             self.rows = new if self.rows.empty else pd.concat([self.rows, new], ignore_index=True)
             if len(self.rows) > MAX_ROWS:
                 self.rows = self.rows.iloc[-int(MAX_ROWS * 0.8):].reset_index(drop=True)
-            self.recent_throughput = len(new) / max(dt, 1e-6)
+            self.recent_throughput = len(new) / max(dt, 1.0)   # at least a 1 s window: no absurd spikes
         else:
             self._accrue_only(start_minute, target, policy)
-        return {"new": len(new), "new_alerts": new_alerts, "caught_up_minutes": caught_up, "skipped_minutes": skipped}
+        return {"new": len(new), "new_alerts": new_alerts, "caught_up_minutes": caught_up}
 
-    def _collect_baseline(self, risk: np.ndarray) -> None:
-        """The first scored transactions of the session define what normal looks like."""
-        if self.baseline is not None or len(risk) == 0:
-            return
-        self._baseline_parts.append(risk)
-        collected = np.concatenate(self._baseline_parts)
-        if len(collected) >= BASELINE_SIZE:
-            self.baseline = collected[:BASELINE_SIZE]
+    def _mix_psi(self, current_step: int) -> float | None:
+        """How far the shape of arriving traffic moved away from the session's start.
+
+        The engine's risk score is a percentile of the traffic it was validated on,
+        so its distribution follows the time of day: hour_of_day is a model input and
+        fraud is far more common at night. Comparing score distributions of two short
+        windows therefore reports drift on completely healthy traffic. The transaction
+        mix does not have that problem — a market shift or a new fraud pattern changes
+        amounts and receiver balances, and ordinary traffic does not.
+        """
+        rows = self.rows
+        first_step = SIM_START_MINUTE // 60 + 1
+        reference = rows[rows["step"] <= first_step + DRIFT_HOURS - 1]
+        # Nights are quiet, so three night hours can hold too few transactions to
+        # compare. Widen the recent window (never past the session start) until the
+        # sample is usable instead of dropping the monitor to "warming up" overnight.
+        recent = rows[rows["step"] > current_step - DRIFT_HOURS]
+        for wider in (2 * DRIFT_HOURS, 4 * DRIFT_HOURS):
+            if len(recent) >= MIN_SAMPLES or recent.empty:
+                break
+            recent = rows[rows["step"] > current_step - wider]
+        if len(recent) < MIN_SAMPLES or len(reference) < MIN_SAMPLES:
+            return None
+        amounts = psi_vs_baseline(np.log10(reference["amount"].clip(lower=1.0)),
+                                  np.log10(recent["amount"].clip(lower=1.0)))
+        empty = psi_binary(reference["oldbalanceDest"] == 0, recent["oldbalanceDest"] == 0)
+        return float(max(amounts, empty))
 
     def _accrue_only(self, start: int, end: int, policy: Policy) -> None:
         per_minute = policy.daily_capacity / MINUTES_PER_DAY
@@ -179,12 +192,9 @@ class LiveStream:
         action = pd.Series(df["decision"].to_numpy(), index=df.index)
         view = build_view(df, df["risk"].to_numpy(), df["reason"].to_numpy(), action, hours, current_step,
                           policy.daily_capacity, costs)
-        # Drift: the last few hours against the session's own start, not against the training data.
-        psi = None
-        if self.baseline is not None:
-            recent = df[(df["step"] > current_step - DRIFT_HOURS) & df["applicable"]]
-            if len(recent) >= MIN_SAMPLES:
-                psi = psi_vs_baseline(self.baseline, recent["risk"].to_numpy())
+        # Drift: the transaction mix of the last hours against the hours before them,
+        # not against the training data (see _mix_psi).
+        psi = self._mix_psi(current_step)
         view["psi"], view["drift"] = psi, drift_status(psi)
         return view
 

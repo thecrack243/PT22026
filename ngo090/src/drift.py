@@ -35,6 +35,18 @@ def drift_status(psi: float | None) -> str:
     return "drift"
 
 
+def psi_binary(reference, current, eps: float = 1e-4) -> float:
+    """PSI between the share of True in two boolean samples (e.g. empty receivers)."""
+    reference = np.asarray(reference, dtype=bool)
+    current = np.asarray(current, dtype=bool)
+    if len(reference) == 0 or len(current) == 0:
+        return 0.0
+    q = max(float(reference.mean()), eps)
+    p = max(float(current.mean()), eps)
+    q, p = min(q, 1 - eps), min(p, 1 - eps)
+    return float((p - q) * np.log(p / q) + ((1 - p) - (1 - q)) * np.log((1 - p) / (1 - q)))
+
+
 def psi_vs_baseline(baseline, current, bins: int = 10, eps: float = 1e-4) -> float:
     """PSI of `current` risk scores against the distribution of a `baseline` sample.
 

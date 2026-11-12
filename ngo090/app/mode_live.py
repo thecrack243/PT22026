@@ -56,8 +56,9 @@ def render_simulator_popover() -> tuple[LiveSettings, bool]:
                                "a higher rate makes the demo easier to follow.")
         speed = st.slider("Simulated minutes per real second", 1.0, 10.0, 2.0, 0.5, key="sim_speed")
         new_pattern = st.toggle("Inject a new fraud pattern", value=False, key="sim_new_pattern",
-                                help="Adds small transfers into empty accounts, a pattern the engine was never "
-                                     "trained on. Watch how many it misses.")
+                                help="Adds small transfers between accounts that already hold money. The engine "
+                                     "learned 'the sender is emptied into an empty receiver', so watch how many "
+                                     "of these it misses.")
         shift = st.toggle("Simulate a market shift", value=False, key="sim_shift",
                           help="Amounts become 10x larger and receivers are new accounts. The drift monitor compares "
                                "the last 6 simulated hours with the start of the session and should react.")
