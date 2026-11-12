@@ -32,19 +32,18 @@ def _save_prefs() -> None:
 
 
 def _select_alert(txn_id: int) -> None:
-    """An alert was clicked: remember it, so the pop-up is drawn on every run until it is closed.
+    """An alert was clicked: the pop-up is drawn on the next full run.
 
-    The dialog has to be re-created on each run, otherwise its own buttons (such as
-    "Open investigation case") would be thrown away together with the closed pop-up.
+    The pop-up is one-shot: it is closed with the X (or Escape) and does not
+    come back on the next rerun. Its own button asks for the pop-up again,
+    because a dialog that is not re-created throws its widgets away.
     """
     st.session_state.live_selected = int(txn_id)     # also used by the inline fallback
-    st.session_state.live_alert_open = int(txn_id)   # the pop-up stays up until it is closed
     st.session_state.alert_to_open = int(txn_id)     # ask the next full run to draw it
 
 
 def _clear_alert() -> None:
     st.session_state.live_selected = None
-    st.session_state.live_alert_open = None
 
 
 def get_stream(engine) -> LiveStream:
@@ -97,31 +96,37 @@ def _prediction(engine, row, policy):
     return cache[int(row.id)]
 
 
+def _create_case(txn_id: int) -> None:
+    """Callback: copy this alert into a durable investigation case (stored on disk)."""
+    store = get_case_store(str(cases_path()))
+    case = store.open_for(txn_id)                    # clicked twice before the page redrew
+    if case is None:
+        stream = st.session_state.get("live_stream")
+        row = stream.get(txn_id) if stream is not None else None
+        if row is None:                              # trimmed away between click and rerun
+            return
+        case = store.create(txn_id, float(row.risk), str(row.decision), str(row.reason),
+                            source="live", amount=float(row.amount), tx_type=str(row.type))
+    st.session_state.alert_to_open = txn_id          # keep the pop-up up to show the confirmation
+
+
 def case_action(row) -> None:
     """Offer to keep this alert as an investigation case (stored on disk).
 
     The alert itself is ephemeral: rows are trimmed and a restart forgets the
     feed. A case is the analyst's durable copy, so it is written to SQLite here.
+    After the click the pop-up redraws and shows the saved case instead.
     """
-    store = get_case_store(str(cases_path()))
-    existing = store.open_for(int(row.id))
+    existing = get_case_store(str(cases_path())).open_for(int(row.id))
 
     st.markdown('<div class="fa-note" style="margin:14px 0 6px">Investigation</div>', unsafe_allow_html=True)
     if existing is not None:
-        st.caption(f"Case {existing.case_id} · {existing.status_label} · {existing.priority_label} priority. "
-                   "Open it from Cases in the sidebar.")
+        st.caption(f"Case {existing.case_id} opened · {existing.status_label} · {existing.priority_label} priority. "
+                   "Manage it from Cases in the sidebar.")
         return
 
-    flash = f"case_flash_{int(row.id)}"
-    if st.button("Open investigation case", key=f"open_case_{int(row.id)}", width="stretch",
-                 icon=":material/add_task:"):
-        case = store.open_for(int(row.id))           # clicked twice before the page redrew
-        if case is None:
-            case = store.create(int(row.id), float(row.risk), str(row.decision), str(row.reason),
-                                source="live", amount=float(row.amount), tx_type=str(row.type))
-        st.session_state[flash] = f"{case.case_id} opened · {case.priority_label} priority · saved on disk"
-    if flash in st.session_state:
-        st.success(st.session_state[flash])
+    st.button("Open investigation case", key=f"open_case_{int(row.id)}", width="stretch",
+              icon=":material/add_task:", on_click=_create_case, args=(int(row.id),))
 
 
 def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
@@ -141,7 +146,6 @@ def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
         st.markdown(ui.alert_detail_html(row, _prediction(engine, row, policy), policy, show_truth, in_dialog=True),
                     unsafe_allow_html=True)
         case_action(row)
-        st.button("Close alert", key=f"close_alert_{txn_id}", on_click=_clear_alert, width="stretch")
 
     _show()
 
@@ -203,10 +207,9 @@ def render(header, tag: str, run, engine) -> None:
 
     stream = get_stream(engine)
     st.session_state.live_tag = tag
-    st.session_state.pop("alert_to_open", None)      # the full run the click asked for is happening
-    open_id = st.session_state.get("live_alert_open")
-    if open_id is not None and hasattr(st, "dialog"):
-        open_alert_popup(int(open_id), policy, show_truth)
+    pending = st.session_state.pop("alert_to_open", None)   # one-shot: the click that asked for the pop-up
+    if pending is not None and hasattr(st, "dialog"):
+        open_alert_popup(int(pending), policy, show_truth)
 
     if hasattr(st, "fragment"):
         @st.fragment(run_every=TICK_SECONDS)
