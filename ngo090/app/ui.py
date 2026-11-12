@@ -151,11 +151,7 @@ box-shadow:0 0 18px rgba(59,130,246,.30);}
 .fa-side-name{font-size:15.5px;font-weight:700;letter-spacing:-.2px;line-height:1.15;}
 .fa-side-sub{font-size:10.5px;color:#8fa3c2;letter-spacing:.13em;text-transform:uppercase;margin-top:3px;}
 .fa-side-label{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#7f93b3;font-weight:700;
-margin:0 0 7px;padding-left:9px;}
-.fa-side-foot{margin-top:16px;padding:12px 13px;border-radius:13px;background:rgba(18,30,56,.55);
-border:1px solid rgba(96,140,220,.18);}
-.fa-side-foot .row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#d2dff3;font-weight:600;}
-.fa-side-foot .note{font-size:11.5px;color:#8397b7;margin-top:5px;}
+margin:4px 0 18px;padding-left:9px;}
 section[data-testid="stSidebar"] .stButton>button{justify-content:flex-start !important;text-align:left !important;
 gap:10px !important;padding:0 13px !important;min-height:43px !important;border-radius:12px !important;
 background:transparent !important;border:1px solid transparent !important;color:#b6c6e2 !important;
@@ -469,15 +465,6 @@ def sidebar_brand() -> str:
         f'<div class="fa-side-logo">{icon("shield-check", "#7db8ff", 21)}</div>'
         f'<div><div class="fa-side-name">Fraud Audit</div>'
         f'<div class="fa-side-sub">Risk Monitor</div></div></div></div>')
-
-
-def sidebar_footer(ready: bool = True) -> str:
-    """Small state block under the navigation."""
-    row = (f'<i class="fa-dot {"live" if ready else "idle"}"></i>'
-           f'{"Engine ready" if ready else "Engine unavailable"}')
-    return compact(
-        f'<div class="fa-root"><div class="fa-side-foot"><div class="row">{row}</div>'
-        f'<div class="note">3 detectors &middot; PaySim format</div></div></div>')
 
 
 def page_animation(token: int, slug: str) -> str:

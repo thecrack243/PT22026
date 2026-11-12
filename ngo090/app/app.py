@@ -56,7 +56,6 @@ def render_sidebar() -> str:
             st.button(mode, key=f"nav_{SLUG[mode]}", icon=ICON[mode], width="stretch",
                       type="primary" if st.session_state.mode == mode else "secondary",
                       on_click=_switch_to, args=(mode,))
-        st.markdown(ui.sidebar_footer(), unsafe_allow_html=True)
     return st.session_state.mode
 
 
