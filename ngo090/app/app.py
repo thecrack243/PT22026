@@ -44,8 +44,14 @@ st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout
 
 
 def _switch_to(mode: str) -> None:
-    """Runs before the page is drawn, so the sidebar and the page agree in one pass."""
+    """Runs before the page is drawn, so the sidebar and the page agree in one pass.
+
+    Pop-ups belong to the page they were opened on: leaving the page dismisses
+    them, so they do not reappear when the analyst comes back later.
+    """
     st.session_state.mode = mode
+    st.session_state["case_to_open"] = None      # investigation-case pop-up
+    st.session_state["live_alert_open"] = None   # live alert pop-up
 
 
 def render_sidebar(store) -> str:

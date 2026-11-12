@@ -15,11 +15,12 @@ ALL = "All"
 
 
 def _open(number: int) -> None:
-    """Remember which case the analyst clicked; the pop-up stays up until it is closed."""
+    """Remember which case the analyst clicked; the pop-up stays up until dismissed."""
     st.session_state.case_to_open = int(number)
 
 
-def _close_case() -> None:
+def _popup_dismissed() -> None:
+    """The X, a filter change or a mode change all put the pop-up away."""
     st.session_state.case_to_open = None
 
 
@@ -33,13 +34,14 @@ def render_filters() -> tuple[str, str, str]:
     cols = st.columns([1.1, 1.1, 2.4, 0.8], vertical_alignment="bottom")
     with cols[0]:
         status = st.selectbox("Status", (ALL, *STATUSES),
-                              format_func=lambda s: s if s == ALL else STATUS_LABELS[s], key="case_status")
+                              format_func=lambda s: s if s == ALL else STATUS_LABELS[s],
+                              key="case_status", on_change=_popup_dismissed)
     with cols[1]:
         priority = st.selectbox("Priority", (ALL, *PRIORITIES),
                                 format_func=lambda p: p if p == ALL else PRIORITY_LABELS[p],
-                                key="case_priority")
+                                key="case_priority", on_change=_popup_dismissed)
     with cols[2]:
-        search = st.text_input("Search", key="case_search",
+        search = st.text_input("Search", key="case_search", on_change=_popup_dismissed,
                                placeholder="Case id (C-0007) or transaction id (1234)")
     with cols[3]:
         # The reset has to happen in a callback: callbacks run before the widgets
@@ -64,7 +66,8 @@ def open_case(number: int, store: CaseStore) -> None:
             cols = st.columns(2)
             status = cols[0].selectbox("Status", STATUSES, index=STATUSES.index(case.status),
                                        format_func=lambda s: STATUS_LABELS[s],
-                                       help="Open, investigating, then one of the three closing states.")
+                                       help="Open, investigating, then a closing state. "
+                                            "Setting Closed is how a case is finished.")
             priority = cols[1].selectbox("Priority", PRIORITIES, index=PRIORITIES.index(case.priority),
                                          format_func=lambda p: PRIORITY_LABELS[p])
             notes = st.text_area("Analyst notes", value=case.notes, height=170,
@@ -76,8 +79,6 @@ def open_case(number: int, store: CaseStore) -> None:
             st.session_state["case_to_open"] = updated.number   # the pop-up shows the saved state
             st.toast(f"{updated.case_id} saved · {updated.status_label}")
             st.rerun()
-
-        st.button("Close case", key=f"close_case_{case.number}", on_click=_close_case, width="stretch")
 
     _show()
 
