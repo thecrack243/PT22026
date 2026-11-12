@@ -1,11 +1,8 @@
 # Downloaded dataset
 /data/
 
-# Assignment guidelines
+# Assignment guidelines (course material, not project code)
 /guidelines/
-
-# Test
-/tests/
 
 # Trained model weights
 /models/
