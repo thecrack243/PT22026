@@ -10,30 +10,48 @@ behind the scenes and the app only shows its decisions and results.
 """
 from __future__ import annotations
 
-import common                      # sets up the import paths; keep this import first
-import streamlit as st
+import sys
+from pathlib import Path
 
-import mode_live
-import mode_replay
-import mode_testing
-import ui
-from src.artifacts import discover_runs
+# This file is also the entry point, so the import paths must exist before the
+# first import of a sibling module (common does it again for its own imports).
+# Without this, the app only starts when the working directory happens to be
+# the project root.
+_APP_DIR = Path(__file__).resolve().parent
+for _path in (str(_APP_DIR.parent), str(_APP_DIR)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
-MODES = ("Historical replay", "Live simulation", "Transaction testing")
+import common                      # noqa: E402  (sets up the import paths)
+import streamlit as st             # noqa: E402
+
+import mode_live                   # noqa: E402
+import mode_replay                 # noqa: E402
+import mode_testing                # noqa: E402
+import ui                          # noqa: E402
+from src.artifacts import discover_runs  # noqa: E402
+
+REPLAY, LIVE, TESTING = "Historical replay", "Live simulation", "Transaction testing"
+MODES = (LIVE, REPLAY, TESTING)    # the live feed is what greets the analyst
 
 st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout="wide",
                    initial_sidebar_state="collapsed")
 
 
 def render_nav() -> str:
-    """Mode switch under the header. Returns the mode to show."""
+    """Mode switch under the header. Returns the mode to show.
+
+    The widget has no key on purpose: its default is the current mode, so the
+    stored state and the widget can never disagree (a keyed widget plus a
+    default produces a Streamlit warning and a stale selection).
+    """
     st.session_state.setdefault("mode", MODES[0])
     if hasattr(st, "segmented_control"):
-        choice = st.segmented_control("Mode", MODES, default=st.session_state.mode, key="mode_choice",
+        choice = st.segmented_control("Mode", MODES, default=st.session_state.mode,
                                       label_visibility="collapsed")
     else:
         choice = st.radio("Mode", MODES, horizontal=True, index=MODES.index(st.session_state.mode),
-                          key="mode_choice", label_visibility="collapsed")
+                          label_visibility="collapsed")
     if choice:                                     # a segmented control can be deselected; keep the last mode
         st.session_state.mode = choice
     return st.session_state.mode
@@ -60,12 +78,12 @@ def main() -> None:
 
     header = st.empty()                             # each mode fills in its own header
     mode = render_nav()
-    if mode != MODES[0]:
+    if mode != REPLAY:
         st.session_state["playing"] = False         # a replay does not keep running in the background
 
-    if mode == MODES[0]:
+    if mode == REPLAY:
         mode_replay.render(header, tag, run)
-    elif mode == MODES[1]:
+    elif mode == LIVE:
         mode_live.render(header, tag, run, engine)
     else:
         mode_testing.render(header, tag, run, engine)
