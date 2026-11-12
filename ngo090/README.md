@@ -171,8 +171,10 @@ The replay re-decides everything from the current policy on every frame, so movi
 
 A generated stream of PaySim-format transactions, scored and decided as it arrives. There is no start or stop: the clock runs and transactions keep coming.
 
+The generator draws its type mix, amounts and receiver balances from the replayed PaySim window, so live traffic looks like the traffic the engine was validated on: about a quarter of scored transactions land above risk 80, close to the replay's 27%, and the review queue fills at a realistic pace.
+
 - The simulated clock advances 1–10 simulated minutes per real second and starts at day 1, 08:00. If the tab was in the background, the missed time is caught up (capped at one simulated day) and reported in a toast.
-- **Simulator settings:** transactions per hour (50–1000), fraud rate (0.5–10%), speed, an optional injection of a fraud pattern the engine was never trained on (many small transfers into empty accounts), an optional market shift, and a toggle for showing the true label.
+- **Simulator settings:** transactions per hour (50–1000), fraud rate (0.5–10%), speed, an optional injection of a fraud pattern the engine misses (small transfers between accounts that already hold money, instead of emptying the sender into an empty account), an optional market shift, and a toggle for showing the true label.
 - **Decisions are final.** A decision is made when the transaction arrives and never changes. Moving a threshold only affects what arrives next, as in a real system. This is the opposite of the replay, deliberately.
 - The dashboard mirrors the replay one, plus a status strip (clock, processing time per transaction, throughput, drift state, review queue usage) and a clickable alert list; clicking an alert opens the transaction, its score and the reasons for it.
 
@@ -209,9 +211,13 @@ net benefit = money saved - review costs - friction costs
 
 ### 7.5 Drift monitoring
 
-The drift monitor compares the last 24 hours of risk scores with the reference traffic, using the Population Stability Index on ten risk bands. Below 0.10 is stable, 0.10–0.25 is "watch", above 0.25 means the traffic has changed and the model may be less reliable. It needs no labels, which is the point: fraud labels arrive days or weeks late.
+The drift monitor uses the Population Stability Index (PSI). Below 0.10 is stable, 0.10–0.25 is "watch", above 0.25 means the traffic has changed and the model may be less reliable. It needs no labels, which is the point: fraud labels arrive days or weeks late.
 
-In replay the reference is the even spread the percentile score should have on healthy traffic; in live mode it is the first 400 transactions of the session, and the last 6 hours are compared with them. Both "market shift" toggles exist to make this alert fire.
+**Replay** compares the last 24 hours of risk scores with the even spread those scores should have on reference traffic, because the score is a percentile of that reference.
+
+**Live** compares the transaction mix — amounts and the share of empty receiving accounts — for the last 3 simulated hours against the first 3 hours of the session. It deliberately does not compare risk scores here. `hour_of_day` is one of the model inputs and fraud is far more common at night, so two short windows of scores differ strongly just because they cover different times of day; a score-based check reports drift on perfectly healthy traffic. Amounts and receiver balances do not have that problem, and they are what a market shift or a new fraud pattern actually change.
+
+Both "market shift" toggles exist to make this alert fire.
 
 ### 7.6 Explanations
 
