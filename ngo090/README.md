@@ -1,6 +1,8 @@
 # Fraud Audit Console
 
-A replay-based backtesting tool for fraud detection. It replays a historical batch of mobile money transactions in time order, scores each transaction with a selectable model, and lets a risk manager choose how to act on those scores (threshold, daily review capacity) while seeing the money saved and lost.
+A fraud detection and risk-decision platform for mobile-money transactions. Three detectors (logistic regression, XGBoost, isolation forest) are combined into one 0–100 risk score by a risk engine; a deterministic policy turns that score into **approve**, **send to review** or **block** under a review-capacity and cost budget.
+
+The app has three modes: **historical replay** (backtest a past period hour by hour), **live simulation** (generated traffic scored as it arrives) and **transaction testing** (one transaction by hand, or a CSV file).
 
 ---
 
@@ -11,9 +13,9 @@ Fraud is rare (about 0.1 to 2% of transactions, depending on the period), so a m
 - **Detection:** how suspicious is each transaction? (machine learning models)
 - **Risk decision:** given limited review capacity and costs, what should we do with each score? (rules and cost arithmetic, adjustable by the user)
 
-The user of the final app is a fraud analyst or risk manager at a financial institution or mobile money provider. They are **not** a customer checking their own transactions.
+The user of the app is a fraud analyst or risk manager at a financial institution or mobile money provider. They are **not** a customer checking their own transactions.
 
-The "real-time" feel is a **simulation**: the app replays a past period (the later part of the dataset, which the models never trained on) one simulated hour at a time. It is a backtesting tool, not a live production system.
+The "real-time" feel is a **simulation**. The replay mode backtests a past period; the live mode generates PaySim-format traffic. This is a decision-support tool, not a production fraud system.
 
 ## 2. Dataset
 
@@ -32,6 +34,7 @@ data/PS_20174392719_1491204439457_log.csv
 Preprocessing used by this project:
 - Only `TRANSFER` and `CASH_OUT` transactions are kept, because fraud only occurs in these two types.
 - **Time-based split:** steps 1 to 500 are used for training, steps 501 to 743 for testing and replay. No random split is used.
+- Inside the training period, the last 100 steps (401–500) are held out as a **validation window**: the base models never train on it, the risk engine is fitted on it, and its score distribution becomes the reference for the 0–100 risk score.
 
 ## 3. Installation
 
@@ -64,18 +67,22 @@ python train/train.py --data-path data/PS_20174392719_1491204439457_log.csv --dr
 python train/train.py --data-path data/PS_20174392719_1491204439457_log.csv --include-balances
 ```
 
-Training takes under a minute on a laptop CPU (no GPU needed). Each run is saved under its own tag:
+Training takes about a minute on a laptop CPU (no GPU needed). Each run is saved under its own tag:
 
 ```
-models/<tag>/                logistic_regression.joblib, xgboost.joblib, isolation_forest.joblib
-results/<tag>/               results.csv, replay_sample.csv, baseline_scores.npz, meta.json
+models/<tag>/     logistic_regression.joblib, xgboost.joblib, isolation_forest.joblib, stacker.joblib
+results/<tag>/    results.csv, replay_sample.csv.gz, baseline_scores.npz, meta.json
 ```
 
-Useful options: `--daily-capacity K` (review team size per simulated day, default 300), `--split-step`, `--max-train-legit`, `--nrows` (quick tests on a subset). Run `python train/train.py --help` for all of them.
+The tag is derived from the options, so the commands above produce `leakage_safe`, `leakage_safe_no_amount_to_balance`, `leakage_safe_no_amount_to_balance_oldbalanceOrg` and `with_balances`. The third one is what the app loads by default (section 6 explains why).
+
+Useful options: `--daily-capacity K` (review team size per simulated day, default 300), `--split-step`, `--val-steps`, `--max-train-legit`, `--replay-legit-per-step`, `--nrows` (quick tests on a subset). Run `python train/train.py --help` for all of them.
 
 ## 5. Models
 
-All three models use the same split, the same features, and the same metrics.
+### 5.1 The three detectors
+
+All three use the same split, the same features and the same metrics.
 
 | Model | Type | Role | How it handles imbalance |
 |---|---|---|---|
@@ -85,11 +92,31 @@ All three models use the same split, the same features, and the same metrics.
 
 **How they work, briefly.** Logistic regression learns a weighted sum of the features and turns it into a probability. XGBoost builds many small decision trees in sequence, each correcting the errors of the previous ones, which captures non-linear rules and interactions. Isolation Forest builds random trees and measures how quickly a transaction can be isolated: unusual transactions are isolated in fewer splits and receive a higher anomaly score.
 
-**Features** (all known at decision time): `amount`, `oldbalanceOrg`, `oldbalanceDest`, transaction type, hour of day, `amount_to_balance` (amount divided by sender's balance), and a flag for a zero destination balance. The post-transaction balances (`newbalanceOrig`, `newbalanceDest`) are excluded by default because a live system would not know them when deciding.
+### 5.2 The risk engine
 
-**Metrics.** Accuracy is misleading here, so the project reports PR-AUC, ROC-AUC, recall at 90% precision, and the capacity-based metrics *recall@K* and *precision@K*: "if reviewers can check only the top K transactions per simulated day, how many frauds do we catch, and how many reviews are wasted?"
+Users of the app never pick a model. A small **stacker** (logistic regression on the three signals, with the two probabilities converted to log-odds first) learns how much to trust each detector. It is fitted on the validation window, which none of the three base models saw.
 
-**Baselines** every model must beat: always approve; flag large transfers (over 200,000); and flag any transaction that moves the sender's entire balance.
+Its raw output is converted to the **0–100 risk score** by taking its percentile among the validation traffic:
+
+> A risk of 99.5 means "more suspicious than 99.5% of the traffic the engine saw while validating".
+
+This is what makes the app usable: the three models score on completely different scales (probabilities vs. anomaly scores), and the percentile puts every decision threshold on one intuitive axis. It also gives the drift monitor a known reference distribution (section 7.5).
+
+The risk engine is what the app uses everywhere. `results/<tag>/results.csv` reports it as its own row, so it can be compared with the three detectors it combines.
+
+### 5.3 Features
+
+All known at decision time: `amount`, `oldbalanceOrg`, `oldbalanceDest`, transaction type, hour of day, `amount_to_balance` (amount divided by sender's balance), and a flag for a zero destination balance.
+
+The post-transaction balances (`newbalanceOrig`, `newbalanceDest`) are **excluded by default**, because a live system would not know them when deciding. They are only added by `--include-balances`, which exists to demonstrate leakage (section 6).
+
+### 5.4 Metrics
+
+Accuracy is misleading here, so the project reports PR-AUC, ROC-AUC, recall at 90% precision, and the capacity-based metrics *recall@K* and *precision@K*: "if reviewers can check only the top K transactions per simulated day, how many frauds do we catch, and how many reviews are wasted?"
+
+### 5.5 Baselines
+
+Every model must beat: always approve; flag large transfers (over 200,000); and flag any transaction that moves the sender's entire balance.
 
 ## 6. Results
 
@@ -103,61 +130,153 @@ Test period: 124,630 transactions, 2,652 of them fraud (2.1%). Training period: 
 | Baseline: full-balance drain rule | 0.973 | 0.973 | 0.973 |
 | Baseline: always approve | 0.021 | 0.021 | 0.021 |
 
-**Key finding.** In PaySim, 97.8% of fraudulent transactions move the sender's *entire* balance, while 0% of legitimate `TRANSFER` and `CASH_OUT` transactions do. A one-line rule on that pattern catches 97.2% of fraud with no false alarms, and with the full feature set XGBoost mostly rediscovers this rule (PR-AUC 1.0). This is a property of the simulator, not evidence of real-world performance. Removing the sender's balance information gives a harder problem (XGBoost PR-AUC 0.64), and **the app uses this harder setting** (`leakage_safe_no_amount_to_balance_oldbalanceOrg`) because it produces models that make mistakes, which is where threshold and review-capacity decisions matter.
+The deployed risk engine, in the third setting, reaches PR-AUC 0.636, ROC-AUC 0.933, recall@K 0.674 and precision@K 0.546.
+
+**Key finding.** In PaySim, 97.8% of fraudulent transactions move the sender's *entire* balance, while 0% of legitimate `TRANSFER` and `CASH_OUT` transactions do. A one-line rule on that pattern catches 97.2% of fraud with no false alarms, and with the full feature set XGBoost mostly rediscovers this rule (PR-AUC 1.000). This is a property of the simulator, not evidence of real-world performance.
+
+Removing the sender's balance information gives a harder problem, and **the app uses this harder setting** (`leakage_safe_no_amount_to_balance_oldbalanceOrg`) because it produces models that make mistakes, which is where threshold, review-capacity and cost decisions actually matter. If the engine scored 1.000, every policy would look the same.
+
+**On the ensemble.** In the deployed setting the stacker puts almost all of its weight on XGBoost (standardised weights: xgboost 1.76, logistic 0.17, isolation forest 0.15), so the engine scores 0.636 against XGBoost's 0.636 on its own. The combination is not buying accuracy here; it buys one calibrated scale, a fallback when one detector degrades, and an anomaly signal that does not depend on labels. That is worth stating plainly rather than claiming the ensemble is stronger than its best member.
 
 Note that the drain rule reads the raw balance regardless of which features the models receive, so in the last column it is a reference point and not a fair competitor.
 
 ## 7. Application
 
-> **Status: in progress.** This section describes the planned app and will be updated when it is finished.
-
-The Streamlit app (`app.py`) is a console for a risk manager:
-
-- **Replay** a held-out period hour by hour and watch scores and actions (approve, review, block).
-- **Choose a model** (logistic regression, XGBoost, Isolation Forest) and compare them on the same replay.
-- **Tune the decision rules:** score threshold and daily review capacity, with costs for missed fraud, review effort, and blocking legitimate customers. The app shows money saved and lost.
-- **Monitor drift:** compare the current score distribution with the training baseline and inject drift to see the alert.
-- **Check a single transaction** manually and get its score.
-
-Planned run command, from the project folder:
+Run from the project folder (the one containing `app/`, `src/` and `models/`):
 
 ```bash
-streamlit run app.py
+streamlit run app/app.py
+
+# Windows, if the launcher fails on a certificate-store error:
+python run_local.py
 ```
 
-The app needs the trained models, so run the training command in section 4 first. The model files are not stored in the repository.
+The app needs a trained run, so run the training command in section 4 first. Model files are not stored in the repository. `results/replay_sample.csv.gz` is, so the replay mode has data to work with as soon as the models exist.
 
-## 8. Limitations
+The mode switch sits under the header, and each mode keeps its own settings when you move between them.
+
+### 7.1 Historical replay
+
+Replays a past period of the held-out test data, one simulated hour at a time, and shows what the current policy would have done.
+
+- **Window:** pick the simulated days to replay; the default is three full days.
+- **Sampling:** by default each run replays a different random 80% of those transactions, so results vary the way real traffic does. Turn it off and type a sample number (shown in the header) to replay exactly the same subset again, or `0` for every transaction.
+- **Controls:** Start / Stop, +1 hour, +1 day, Reset, and a playback speed in seconds per simulated hour.
+- **Scenario:** a "market shift" toggle makes amounts 10x larger and receivers new accounts halfway through the replay, so the drift monitor can be seen reacting.
+- **Dashboard:** transactions, alerts, fraud caught and net benefit, each compared with the previous six simulated hours; traffic and alerts per hour; the approve / review / block split; money stopped versus money lost; the most common reason behind each alert; the latest alerts with their true outcome (known only because this is a replay).
+
+The replay re-decides everything from the current policy on every frame, so moving a threshold rewrites the past on purpose. It is a backtest, and the policy advisor relies on exactly that.
+
+### 7.2 Live simulation
+
+A generated stream of PaySim-format transactions, scored and decided as it arrives. There is no start or stop: the clock runs and transactions keep coming.
+
+- The simulated clock advances 1–10 simulated minutes per real second and starts at day 1, 08:00. If the tab was in the background, the missed time is caught up (capped at one simulated day) and reported in a toast.
+- **Simulator settings:** transactions per hour (50–1000), fraud rate (0.5–10%), speed, an optional injection of a fraud pattern the engine was never trained on (many small transfers into empty accounts), an optional market shift, and a toggle for showing the true label.
+- **Decisions are final.** A decision is made when the transaction arrives and never changes. Moving a threshold only affects what arrives next, as in a real system. This is the opposite of the replay, deliberately.
+- The dashboard mirrors the replay one, plus a status strip (clock, processing time per transaction, throughput, drift state, review queue usage) and a clickable alert list; clicking an alert opens the transaction, its score and the reasons for it.
+
+### 7.3 Transaction testing
+
+- **Single transaction:** type, amount, both balances before the transaction, and hour of day. Returns the 0–100 risk, the decision under the current policy, and the facts that raised or lowered the score. Two example buttons fill in a normal transfer and a large transfer to an empty account.
+- **Upload a file:** up to 20,000 rows. Required columns `type`, `amount`, `oldbalanceOrg`, `oldbalanceDest`; optional `hour` or `step`, and `isFraud` if the true labels are known. Header names are case insensitive and extra columns are ignored. Rows that fail validation are listed with a reason instead of failing the whole file. A template file can be downloaded, and the scored file can be downloaded again with risk, decision and reason per row.
+- Review capacity is not applied here, because it only means something for transactions spread over time.
+
+### 7.4 Decision policy and money
+
+The policy is set in two popovers available in every mode:
+
+- **Auto-block above risk score** (90–100; 100 means never block automatically).
+- **Only review above risk score**, so reviewers skip transactions that look clearly normal.
+- **Daily review capacity**, the number of transactions the team can check per simulated day.
+- **Presets:** Balanced, Light touch, Strict. Moving a slider switches the policy to Custom.
+
+Review capacity is a **causal budget**: it grows hour by hour (a minute at a time in live mode), unused capacity carries over up to one day's worth, and each period the highest-risk candidates use it first. It never uses information from later in the day.
+
+Money is measured in the currency units of the dataset (PaySim units, not real currency), so cost settings must be on the same scale as the amounts:
+
+```
+fraud blocked            + amount saved
+fraud reviewed           + amount * review catch rate saved
+fraud approved             nothing saved
+any reviewed             - review cost
+legitimate blocked       - friction cost
+
+net benefit = money saved - review costs - friction costs
+```
+
+**Policy advisor** (replay mode, off by default). Sweeps auto-block thresholds from 90 to 100 and review capacities from 0 to 1,000, evaluates each combination on the replayed transactions, and reports the one with the highest net benefit. Because it uses the true labels of that period, it is a backtest and guidance, not a prediction. One button copies the recommendation into the policy.
+
+### 7.5 Drift monitoring
+
+The drift monitor compares the last 24 hours of risk scores with the reference traffic, using the Population Stability Index on ten risk bands. Below 0.10 is stable, 0.10–0.25 is "watch", above 0.25 means the traffic has changed and the model may be less reliable. It needs no labels, which is the point: fraud labels arrive days or weeks late.
+
+In replay the reference is the even spread the percentile score should have on healthy traffic; in live mode it is the first 400 transactions of the session, and the last 6 hours are compared with them. Both "market shift" toggles exist to make this alert fire.
+
+### 7.6 Explanations
+
+For each alert the app reports the facts that pushed the score up or down. The method is occlusion: take the transaction, replace one input with a typical value (the median of an unlabelled training sample), and measure how much the engine's raw score drops. The drop is that input's contribution. It needs no extra library and works for any model, including the unsupervised one.
+
+Explanations are only computed for transactions at or above risk 80, which is the range the policy can actually flag; this keeps the replay fast. They describe what the engine reacted to, not proof of fraud.
+
+## 8. Tests
+
+```bash
+pytest
+```
+
+The suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift, feature engineering, the processing and validation path, the live stream and generator, replay sampling, and a training smoke test that builds all three models on a small slice. The tests build their own small engine from synthetic data, so they need neither the PaySim CSV nor the trained model files.
+
+## 9. Limitations
 
 - **Synthetic data.** PaySim is simulated. Its fraud patterns (such as draining the whole account) are far more regular than real fraud, so scores do not transfer to real institutions.
-- **Instant labels.** The replay knows the true label of every transaction immediately. In reality, fraud labels arrive days or weeks later, and only for transactions that were allowed or investigated.
+- **Instant labels.** The replay knows the true label of every transaction immediately. In reality fraud labels arrive days or weeks later, and only for transactions that were allowed or investigated. Every "fraud caught" figure in the app is an upper bound for that reason.
 - **Distribution shift in the test period.** Legitimate traffic thins out in the later steps while fraud keeps arriving, so the fraud rate rises from about 0.2% in training to 2.1% in testing. This shift is useful for studying drift but also affects metric values.
-- **Subsampled replay file.** `replay_sample.csv` keeps all fraud but only a sample of legitimate rows, so its fraud rate (about 3.5%) is higher than the true rate. It is for demonstration, not for measuring metrics.
+- **Subsampled replay file.** `replay_sample.csv.gz` keeps all 2,652 fraud rows but only 150 legitimate rows per hour, so its fraud rate is 6.8% rather than 2.1%. It is for demonstration, not for measuring metrics.
+- **Two decision semantics.** Replay recomputes decisions from the current policy (a backtest); live freezes each decision when the transaction arrives (an operational log). Both are correct for their mode, but the same transaction can show different actions in the two modes.
 - **Limited tuning.** The models use fixed, lightly chosen hyperparameters. The goal is a fair comparison, not the highest possible score.
 - **Isolation Forest** is unsupervised and generally weaker than supervised models on known fraud patterns; its value is in catching unusual behaviour that labels do not cover.
+- **No persistence.** The live stream, the review queue and all decisions live in the browser session. Closing the tab loses them, and nothing is written to a database. Investigation cases, analyst notes, audit trails and approval workflows are not implemented yet.
 
-## 9. Project structure
+## 10. Project structure
 
 ```
 ngo090/
 ├── README.md
 ├── requirements.txt
-├── .gitignore
-├── app.py                  # Streamlit app (in progress)
-├── train/
-│   └── train.py            # trains and evaluates the three models
+├── run_local.py              # Windows launcher (works around a certificate-store error)
+├── app/
+│   ├── app.py                # entry point, mode switch
+│   ├── common.py             # cached loaders, policy and cost widgets
+│   ├── mode_replay.py        # mode 1: historical replay
+│   ├── mode_live.py          # mode 2: live simulation
+│   ├── mode_testing.py       # mode 3: transaction testing
+│   └── ui.py                 # HTML/CSS/SVG builders for the dashboards
 ├── src/
-│   ├── __init__.py
-│   ├── features.py         # data loading and feature engineering (shared by training and app)
-│   └── decision.py         # risk layer: thresholds, review cap, costs (in progress)
-├── data/                   # PaySim CSV goes here (not committed)
-├── models/                 # trained models (not committed; regenerate with train.py)
-└── results/                # metrics and replay data per run
+│   ├── features.py           # data loading and feature engineering (shared with training)
+│   ├── scoring.py            # model loading, sign convention (higher = more suspicious)
+│   ├── engine.py             # risk engine: three detectors + stacker + 0-100 percentile
+│   ├── decision.py           # policy, review budget, money, policy advisor
+│   ├── processing.py         # validate, score, decide, explain a batch or a form
+│   ├── predict.py            # one transaction in, one prediction out
+│   ├── explain.py            # occlusion-based reasons
+│   ├── monitor.py            # replay state -> dashboard numbers
+│   ├── replay.py             # replay window and sampling
+│   ├── live.py               # the live stream: clock, catch-up, decisions
+│   ├── generator.py          # PaySim-format transaction generator
+│   ├── drift.py              # PSI and drift status
+│   └── artifacts.py          # find and load a training run
+├── train/
+│   └── train.py              # trains the three models and the risk engine
+├── tests/                    # pytest suite (no dataset or model files needed)
+├── data/                     # PaySim CSV goes here (not committed)
+├── models/                   # trained models (not committed; regenerate with train.py)
+└── results/                  # metrics, replay sample and score reference per run
 ```
 
-## 10. References and acknowledgements
+## 11. References and acknowledgements
 
 - E. A. Lopez-Rojas, A. Elmir, and S. Axelsson, "PaySim: A financial mobile money simulator for fraud detection," 28th European Modeling and Simulation Symposium (EMSS), 2016.
 - PaySim dataset on Kaggle: https://www.kaggle.com/datasets/ealaxi/paysim1
-- Libraries: pandas, NumPy, scikit-learn, XGBoost, joblib, Streamlit.
-- `<List any external code, tutorials, or repositories you adapted, as the guidelines require. If none, write "No external code was reused.">`
+- Libraries: pandas, NumPy, scikit-learn, XGBoost, joblib, Streamlit, pytest.
+- No external code was reused. All training, decision, replay, explanation and interface code in this repository was written for this project.
