@@ -25,6 +25,7 @@ def make_csv(path, n=30_000, seed=0):
     }).to_csv(path, index=False)
 
 
+@pytest.mark.slow
 def test_training_writes_everything_the_app_needs(tmp_path, monkeypatch):
     csv = tmp_path / "paysim.csv"
     make_csv(csv)

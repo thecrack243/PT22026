@@ -229,10 +229,13 @@ Explanations are only computed for transactions at or above risk 80, which is th
 ## 8. Tests
 
 ```bash
-pytest
+pytest                 # everything, about 30 s
+pytest -m "not slow"   # the fast suite only, about 15 s
 ```
 
-The suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift, feature engineering, the processing and validation path, the live stream and generator, replay sampling, and a training smoke test that builds all three models on a small slice. The tests build their own small engine from synthetic data, so they need neither the PaySim CSV nor the trained model files.
+The fast suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift statistics, feature engineering, the processing and validation path, invalid-input handling, generator reproducibility, live-stream state and scoring consistency between the single-transaction and batch paths. It builds its own small engine from synthetic data, so it needs neither the PaySim CSV nor the trained model files.
+
+Tests marked `slow` are integration tests that need more: the end-to-end app tests (`tests/test_ui_modes.py`) load the real trained engine and drive mode switching, alert selection and session-state upgrades headlessly, plus the training smoke test and the long drift-monitor run. They are skipped automatically when no trained run exists.
 
 ## 9. Limitations
 

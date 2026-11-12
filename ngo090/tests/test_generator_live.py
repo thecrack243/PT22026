@@ -48,6 +48,32 @@ def test_generator_is_reproducible_and_handles_empty_ranges():
         GeneratorConfig(fraud_rate=2.0)
 
 
+def test_generator_seeds_differ_and_settings_changes_stay_valid():
+    a = TransactionGenerator(seed=1).generate(0, 240, GeneratorConfig())
+    b = TransactionGenerator(seed=2).generate(0, 240, GeneratorConfig())
+    assert not a["amount"].reset_index(drop=True).equals(b["amount"].reset_index(drop=True))
+    gen = TransactionGenerator(seed=3)                            # one instance across changing settings
+    for config in (GeneratorConfig(volume_per_hour=100), GeneratorConfig(volume_per_hour=900, fraud_rate=0.08),
+                   GeneratorConfig(volume_per_hour=300, market_shift=True),
+                   GeneratorConfig(volume_per_hour=300, fraud_rate=0.05, new_pattern=True)):
+        df = gen.generate(0, 720, config)                         # 12 h: enough rows for a rate check
+        clean, rejected = validate_frame(df)
+        assert rejected.empty and len(clean) == len(df)
+        assert 0 <= df["isFraud"].mean() <= config.fraud_rate * 2
+
+
+def test_policy_edges_review_floor_and_never_block():
+    # a review floor of 100 only catches perfect scores; everything below it is approved
+    s = LiveStream(ENGINE, seed=4, now=0.0)
+    s.advance(Policy(block_threshold=float("inf"), review_min_score=100.0, daily_capacity=150), now=60.0)
+    reviewed = s.rows[s.rows["decision"] == REVIEW]
+    assert (reviewed["risk"] >= 100.0).all()
+    assert (s.rows.loc[s.rows["risk"] < 100.0, "decision"] == APPROVE).all()
+    # the policy validates its review budget
+    with pytest.raises(ValueError):
+        Policy(daily_capacity=-5)
+
+
 def test_stream_processes_what_the_simulated_clock_covers():
     s = LiveStream(ENGINE, seed=3, now=0.0)
     info = s.advance(NEVER, now=30.0)                                 # 30 s x 2 min/s = 60 simulated minutes
@@ -139,6 +165,45 @@ def test_psi_vs_baseline():
     assert psi_vs_baseline(np.full(100, 5.0), base) == 0.0                 # degenerate baseline
 
 
+def test_the_drift_window_widens_on_quiet_nights_instead_of_dropping_out():
+    """Fewer than MIN_SAMPLES rows in the last 3 hours (a quiet night) must not
+    silence the monitor: _mix_psi widens the recent window until it is usable."""
+    from src.drift import MIN_SAMPLES
+    s = LiveStream(ENGINE, seed=13, now=0.0)
+    rng = np.random.default_rng(0)
+
+    def block(step, n):
+        return pd.DataFrame({
+            "step": step, "minute": (step - 1) * 60, "type": "TRANSFER",
+            "amount": rng.lognormal(12, 1, n), "oldbalanceOrg": rng.lognormal(13, 1, n),
+            "oldbalanceDest": np.where(rng.random(n) < 0.2, 0.0, rng.lognormal(13, 1, n)),
+            "isFraud": 0, "risk": rng.uniform(0, 100, n), "reason": "", "decision": "approve",
+            "applicable": True, "hour": 12, "proc_ms": 0.0, "pattern": "",
+        })
+
+    s.rows = pd.concat([block(9, MIN_SAMPLES + 50), block(10, MIN_SAMPLES + 50),   # session start: the reference
+                        block(17, MIN_SAMPLES - 50),                               # 3-6 h ago
+                        block(19, 80)])                                            # the quiet last 3 hours
+    s.minute = 20 * 60
+    psi = s._mix_psi(current_step=20)
+    assert psi is not None and psi >= 0.0                                          # widened window found enough rows
+    # and when even a day of widening cannot help (no session-start reference), the monitor reports warming up
+    s.rows = s.rows[s.rows["step"] >= 17].reset_index(drop=True)
+    assert s._mix_psi(current_step=20) is None
+    assert s.view(NEVER, CostConfig())["drift"] == "warming"
+
+
+def test_live_scoring_agrees_with_the_batch_scoring_path():
+    """The live feed and the CSV upload must give one transaction the same score."""
+    from src.processing import engine_frame
+    s = LiveStream(ENGINE, seed=14, now=0.0)
+    s.advance(Policy(block_threshold=99.5, review_min_score=90.0, daily_capacity=150), now=60.0)
+    scored = s.rows[s.rows["applicable"] & s.rows["type"].isin(("TRANSFER", "CASH_OUT"))].head(50)
+    assert len(scored) >= 10
+    batch = ENGINE.score(engine_frame(scored))
+    np.testing.assert_allclose(batch.risk, scored["risk"].to_numpy(), atol=1e-6)
+
+
 def test_market_shift_makes_amounts_larger_and_receivers_new():
     gen_a, gen_b = TransactionGenerator(seed=3), TransactionGenerator(seed=3)
     normal = gen_a.generate(0, 600, GeneratorConfig(volume_per_hour=300))
@@ -147,6 +212,7 @@ def test_market_shift_makes_amounts_larger_and_receivers_new():
     assert (shifted[shifted["type"] != "PAYMENT"]["oldbalanceDest"] == 0).all()
 
 
+@pytest.mark.slow
 def test_drift_monitor_is_quiet_for_stable_traffic_and_reacts_to_a_shift():
     s = LiveStream(ENGINE, seed=12, now=0.0, settings=LiveSettings(volume_per_hour=600, fraud_rate=0.02))
     assert s.view(NEVER, CostConfig())["drift"] == "warming"
