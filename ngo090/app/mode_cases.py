@@ -67,34 +67,50 @@ def open_case(number: int, store: CaseStore) -> None:
         if case is None:                            # deleted in another tab
             st.info("This case no longer exists.")
             return
-        st.markdown(ui.case_detail_html(case), unsafe_allow_html=True)
 
-        # Status lives OUTSIDE the form on purpose: a form only hands its
-        # widgets' values over when it is submitted, so "Save and close" would
-        # never learn that the analyst picked a resolution and stay disabled.
-        # Out here the pop-up (a fragment) reruns on every change instead.
-        status = st.selectbox("Status", STATUSES, index=STATUSES.index(case.status),
-                              format_func=lambda s: STATUS_LABELS[s],
-                              key=f"case_popup_status_{number}",
-                              help="Investigating while you work; Confirmed fraud or "
-                                   "False positive once you decided.")
+        # Two columns: the case and its editable fields on the left, the audit
+        # trail on the right -- side by side, so the history is never something
+        # the analyst has to scroll down to.
+        left, right = st.columns([1.55, 1], gap="medium")
 
-        with st.form(f"case_form_{case.number}"):
-            priority = st.selectbox("Priority", PRIORITIES, index=PRIORITIES.index(case.priority),
-                                    format_func=lambda p: PRIORITY_LABELS[p])
-            notes = st.text_area("Analyst notes", value=case.notes, height=170,
-                                 placeholder="What did you check, what did you find, what did you decide?")
-            saved = False
-            saved_closed = False
+        with left:
+            st.markdown(ui.case_detail_html(case), unsafe_allow_html=True)
+
+            # Status lives OUTSIDE the form on purpose: a form only hands its
+            # widgets' values over when it is submitted, so "Save and close" would
+            # never learn that the analyst picked a resolution and stay disabled.
+            # Out here the pop-up (a fragment) reruns on every change instead.
+            status = st.selectbox("Status", STATUSES, index=STATUSES.index(case.status),
+                                  format_func=lambda s: STATUS_LABELS[s],
+                                  key=f"case_popup_status_{number}",
+                                  help="Investigating while you work; Confirmed fraud or "
+                                       "False positive once you decided.")
+
+            with st.form(f"case_form_{case.number}"):
+                priority = st.selectbox("Priority", PRIORITIES, index=PRIORITIES.index(case.priority),
+                                        format_func=lambda p: PRIORITY_LABELS[p])
+                notes = st.text_area("Analyst notes", value=case.notes, height=170,
+                                     placeholder="What did you check, what did you find, what did you decide?")
+                saved = False
+                saved_closed = False
+                if case.closed:
+                    saved = st.form_submit_button("Save case")   # a closed case is only edited, not re-closed
+                else:
+                    btn = st.columns(2)
+                    saved = btn[0].form_submit_button("Save case")
+                    # Closing records the decision: while the resolution is still
+                    # "Investigating" there is nothing to close the case with.
+                    saved_closed = btn[1].form_submit_button("Save and close", type="primary",
+                                                             disabled=status == "investigating")
+
             if case.closed:
-                saved = st.form_submit_button("Save case")   # a closed case is only edited, not re-closed
-            else:
-                btn = st.columns(2)
-                saved = btn[0].form_submit_button("Save case")
-                # Closing records the decision: while the resolution is still
-                # "Investigating" there is nothing to close the case with.
-                saved_closed = btn[1].form_submit_button("Save and close", type="primary",
-                                                         disabled=status == "investigating")
+                # A plain on_click callback would only rerun this fragment, leaving
+                # the pop-up title and the sidebar badge stale; handling the click
+                # here (like the save buttons) lets the st.rerun below refresh all.
+                if st.button("Reopen case", key=f"reopen_case_{case.number}",
+                             help="Puts the case back to work: open again, with the same resolution."):
+                    store.update(case.case_id, closed=False)
+                    st.rerun()
 
         if saved or saved_closed:
             updated = store.update(case.case_id, status=status, notes=notes, priority=priority,
@@ -103,21 +119,18 @@ def open_case(number: int, store: CaseStore) -> None:
             st.toast(f"{updated.case_id} saved · {updated.state_label}")
             st.rerun()
 
-        if case.closed:
-            # A plain on_click callback would only rerun this fragment, leaving
-            # the pop-up title and the sidebar badge stale; handling the click
-            # here (like the save buttons) lets the st.rerun below refresh all.
-            if st.button("Reopen case", key=f"reopen_case_{case.number}",
-                         help="Puts the case back to work: open again, with the same resolution."):
-                store.update(case.case_id, closed=False)
-                st.rerun()
-
-        # The audit trail: everything that ever happened to this case, newest
-        # first. It only grows -- edits overwrite the case, never the history.
-        events = store.events(case.number)
-        if events:
-            with st.expander(f"Investigation history ({len(events)})", expanded=len(events) <= 4):
+        with right:
+            # The audit trail: everything that ever happened to this case,
+            # newest first. It only grows -- edits overwrite the case, never
+            # the history -- and it lives beside the case, not under it.
+            events = store.events(case.number)
+            st.markdown('<div class="fa-sub2" style="margin-top:2px">Investigation history</div>',
+                        unsafe_allow_html=True)
+            if events:
                 st.markdown(ui.case_history_html(events), unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="fa-note">Nothing recorded yet.</div>',
+                            unsafe_allow_html=True)
 
     _show()
 
@@ -149,7 +162,10 @@ def render(header, store: CaseStore) -> None:
                 f'most recently updated first</div>', unsafe_allow_html=True)
     with st.container(border=True):
         for case in cases:
-            st.button(ui.case_label(case), key=f"case_{case.number}", on_click=_open, args=(case.number,))
+            # stretch: every row uses the full width, instead of shrinking to
+            # its own text and leaving a ragged empty strip on the right.
+            st.button(ui.case_label(case), key=f"case_{case.number}", width="stretch",
+                      on_click=_open, args=(case.number,))
 
     # The pop-up has to be re-created on every run while it is open, otherwise
     # editing the form inside it (a full rerun) would throw it away.
