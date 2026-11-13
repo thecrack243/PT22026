@@ -312,3 +312,87 @@ def test_auto_open_with_limit_zero_has_no_cap(store):
 
     rows = alerts(*[(i, 99.5, "block") for i in range(1, 26)])
     assert auto_open(store, rows, min_risk=99.0, limit=0) == 25
+
+
+# --------------------------------------------------------------------------- #
+# Investigation history (case_events)
+# --------------------------------------------------------------------------- #
+def test_opening_a_case_writes_the_first_history_row(store):
+    case = make(store, txn_id=42, risk=97.4, decision="block", source="live")
+    events = store.events(case.case_id)
+
+    assert len(events) == 1
+    assert events[0].kind == "created"
+    assert "alert #42" in events[0].detail and "risk 97.4" in events[0].detail
+    assert events[0].case_number == case.number and events[0].created_at == case.created_at
+
+
+def test_auto_opened_cases_say_so_in_their_history(store):
+    from src.cases import auto_open
+
+    auto_open(store, alerts((5, 99.9, "block")), min_risk=99.0)
+    events = store.events(store.list()[0].case_id)
+    assert events[0].kind == "created" and events[0].detail.startswith("Auto-opened")
+
+
+def test_every_edit_appends_without_overwriting(store):
+    case = make(store)                                             # risk 97.4 -> priority starts urgent
+    store.update(case.case_id, status="confirmed_fraud", priority="high", closed=True)
+    store.update(case.case_id, notes="cleared with the customer")
+    store.update(case.case_id, closed=False)                       # reopen
+
+    events = store.events(case.case_id)
+    kinds = [e.kind for e in events]                               # newest first
+    assert kinds == ["reopened", "notes", "closed", "priority", "status", "created"]
+    assert "Investigating -> Confirmed fraud" in events[-2].detail  # the status row
+    assert events[0].detail == "Case reopened"
+
+
+def test_history_survives_a_restart(tmp_path):
+    path = tmp_path / "cases.db"
+    first = CaseStore(path)
+    case = make(first, txn_id=9)
+    first.update(case.case_id, status="false_positive", closed=True)
+    first.close()
+
+    reopened = CaseStore(path)
+    events = reopened.events(case.case_id)
+    assert [e.kind for e in events] == ["closed", "status", "created"]
+    reopened.close()
+
+
+def test_deleting_a_case_removes_its_history(store):
+    case = make(store)
+    store.update(case.case_id, notes="temp")
+    assert store.delete(case.case_id)
+    assert store.events(case.case_id) == []
+
+
+def test_a_new_case_has_history_but_an_empty_edit_writes_nothing(store):
+    case = make(store)
+    before = store.events(case.case_id)
+    same = store.update(case.case_id, status=case.status, notes=case.notes,
+                        priority=case.priority, closed=case.closed)
+    assert same.updated_at == case.updated_at                      # no real change
+    assert len(store.events(case.case_id)) == len(before)          # and no new rows
+
+
+def test_cases_from_before_the_history_table_get_a_backfilled_row(tmp_path):
+    # Simulate an old database: build one, drop the events table, reopen.
+    import sqlite3
+
+    path = tmp_path / "cases.db"
+    old = CaseStore(path)
+    case = make(old, txn_id=3)
+    old.close()
+    conn = sqlite3.connect(path)
+    conn.execute("DROP TABLE case_events")
+    conn.commit()
+    conn.close()
+
+    upgraded = CaseStore(path)                                     # what the app does on startup
+    events = upgraded.events(case.case_id)
+    assert len(events) == 1
+    assert events[0].kind == "created" and "alert #3" in events[0].detail
+    assert events[0].created_at == case.created_at                 # backdated to the open time
+    upgraded.close()

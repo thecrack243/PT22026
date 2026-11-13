@@ -112,6 +112,13 @@ def open_case(number: int, store: CaseStore) -> None:
                 store.update(case.case_id, closed=False)
                 st.rerun()
 
+        # The audit trail: everything that ever happened to this case, newest
+        # first. It only grows -- edits overwrite the case, never the history.
+        events = store.events(case.number)
+        if events:
+            with st.expander(f"Investigation history ({len(events)})", expanded=len(events) <= 4):
+                st.markdown(ui.case_history_html(events), unsafe_allow_html=True)
+
     _show()
 
 

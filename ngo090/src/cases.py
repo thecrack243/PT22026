@@ -54,6 +54,14 @@ CREATE TABLE IF NOT EXISTS cases (
 );
 CREATE INDEX IF NOT EXISTS idx_cases_txn    ON cases(txn_id);
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
+CREATE TABLE IF NOT EXISTS case_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id    INTEGER NOT NULL,
+    kind       TEXT    NOT NULL,
+    detail     TEXT    NOT NULL,
+    created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_case_events_case ON case_events(case_id);
 """
 _COLUMNS = ("id", "txn_id", "risk", "decision", "explanation", "status", "closed", "notes",
             "priority", "source", "amount", "tx_type", "created_at", "updated_at")
@@ -147,6 +155,22 @@ class Case:
         return DECISION_LABELS.get(self.decision, self.decision.title())
 
 
+@dataclass(frozen=True)
+class CaseEvent:
+    """One line of a case's history: what happened, when.
+
+    Every meaningful change (opening, status, priority, notes, close/reopen)
+    appends a row; nothing is ever overwritten, so the pop-up can show the
+    full investigation trail even after the case itself was edited many times.
+    """
+
+    number: int          # row id of the event
+    case_number: int     # the case this event belongs to
+    kind: str            # created / status / priority / notes / closed / reopened
+    detail: str          # human-readable one-liner, ready to display
+    created_at: str = ""
+
+
 class CaseStore:
     """SQLite-backed store of investigation cases.
 
@@ -195,6 +219,13 @@ class CaseStore:
         conn.execute(f"UPDATE cases SET status = 'investigating' WHERE status = ?", (_LEGACY_OPEN,))
         conn.execute("UPDATE cases SET closed = 1, status = 'investigating' WHERE status = ?",
                      (_LEGACY_CLOSED,))
+        # Cases created before the history table existed get one backfilled
+        # "created" row, so their trail starts somewhere instead of being blank.
+        conn.execute(
+            "INSERT INTO case_events (case_id, kind, detail, created_at)"
+            " SELECT id, 'created', 'Opened from alert #' || txn_id"
+            " || ' (recorded before history was tracked)', created_at"
+            " FROM cases WHERE id NOT IN (SELECT case_id FROM case_events)")
 
     def _row_to_case(self, row: sqlite3.Row) -> Case:
         return Case(number=row["id"], txn_id=row["txn_id"], risk=row["risk"],
@@ -319,6 +350,9 @@ class CaseStore:
         priority = _check_priority(priority or priority_for(risk, decision))
         status = _check_status(status)
         stamp = _now()
+        opened = ("Auto-opened" if source == "auto" else "Opened") \
+            + f" from alert #{int(txn_id)} - risk {risk:.1f}, " \
+            + DECISION_LABELS.get(str(decision), str(decision).title())
         conn = self._connect()
         try:
             cur = conn.execute(
@@ -329,8 +363,10 @@ class CaseStore:
                  1 if closed else 0, str(notes), priority,
                  str(source), float(amount), str(tx_type), stamp, stamp),
             )
-            conn.commit()
             number = int(cur.lastrowid)
+            conn.execute("INSERT INTO case_events (case_id, kind, detail, created_at)"
+                         " VALUES (?,?,?,?)", (number, "created", opened, stamp))
+            conn.commit()
         finally:
             if self._memory is None:
                 conn.close()
@@ -353,12 +389,31 @@ class CaseStore:
         changed = (new_status, new_priority, new_notes, new_closed) != \
                   (case.status, case.priority, case.notes, case.closed)
         updated = _now() if changed else case.updated_at
+
+        # One history row per changed field, written in the same transaction
+        # as the update itself so a crash can never leave one without the other.
+        events: list[tuple[str, str]] = []
+        if new_status != case.status:
+            events.append(("status", f"Status: {STATUS_LABELS[case.status]}"
+                                     f" -> {STATUS_LABELS[new_status]}"))
+        if new_priority != case.priority:
+            events.append(("priority", f"Priority: {PRIORITY_LABELS[case.priority]}"
+                                       f" -> {PRIORITY_LABELS[new_priority]}"))
+        if new_notes != case.notes:
+            events.append(("notes", "Notes updated"))
+        if new_closed != case.closed:
+            events.append(("closed" if new_closed else "reopened",
+                           "Case closed" if new_closed else "Case reopened"))
+
         conn = self._connect()
         try:
             conn.execute("UPDATE cases SET status = ?, notes = ?, priority = ?, closed = ?,"
                          " updated_at = ? WHERE id = ?",
                          (new_status, new_notes, new_priority, 1 if new_closed else 0,
                           updated, case.number))
+            conn.executemany("INSERT INTO case_events (case_id, kind, detail, created_at)"
+                             " VALUES (?,?,?,?)",
+                             [(case.number, kind, detail, updated) for kind, detail in events])
             conn.commit()
         finally:
             if self._memory is None:
@@ -370,11 +425,30 @@ class CaseStore:
         """Shortcut for moving a case's resolution."""
         return self.update(value, status=status)
 
+    def events(self, value: str | int, limit: int = 200) -> list[CaseEvent]:
+        """A case's history, newest first.
+
+        Every open, edit, close and reopen is in here; the list only grows,
+        which is what makes an investigation auditable after the fact.
+        """
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT id, case_id, kind, detail, created_at FROM case_events"
+                " WHERE case_id = ? ORDER BY id DESC LIMIT ?",
+                (parse_case_id(value), int(limit))).fetchall()
+        finally:
+            if self._memory is None:
+                conn.close()
+        return [CaseEvent(number=r["id"], case_number=r["case_id"], kind=r["kind"],
+                          detail=r["detail"], created_at=r["created_at"]) for r in rows]
+
     def delete(self, value: str | int) -> bool:
         """Remove a case (kept for tests and for cleaning up mistakes)."""
         conn = self._connect()
         try:
             cur = conn.execute("DELETE FROM cases WHERE id = ?", (parse_case_id(value),))
+            conn.execute("DELETE FROM case_events WHERE case_id = ?", (parse_case_id(value),))
             conn.commit()
             return cur.rowcount > 0
         finally:

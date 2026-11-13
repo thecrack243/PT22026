@@ -193,6 +193,16 @@ def test_the_case_lifecycle_from_the_pop_up(tmp_path, monkeypatch):
     reopened = store.get(case.case_id)
     assert not reopened.closed and reopened.status == "confirmed_fraud"
 
+    # The pop-up also carries the audit trail: open -> status -> close -> reopen.
+    dlg = at.get("dialog")[0]
+    expanders = [e for e in at.get("expander") if e.label.startswith("Investigation history")]
+    assert expanders, "the pop-up shows the investigation history"
+    assert expanders[0].label == "Investigation history (4)"
+    trail = "".join(m.value for m in expanders[0].markdown)
+    assert "Opened from alert #77" in trail
+    assert "Status: Investigating -&gt; Confirmed fraud" in trail
+    assert "Case closed" in trail and "Case reopened" in trail
+
 
 def _engine():
     return load_engine(ROOT, TAG)

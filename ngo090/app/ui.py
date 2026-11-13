@@ -858,3 +858,23 @@ def cases_empty_html() -> str:
                    f'{icon("list", "#5aa2ff", 34)}<h3>No investigation cases yet</h3>'
                    '<p>Open an alert in the live simulation and choose <b>Open investigation case</b>. '
                    'Cases are stored on disk, so they are still here after a restart.</p></div></div>')
+
+
+_EVENT_DOT = {"created": "#5aa2ff", "status": "#fbbf24", "priority": "#c084fc",
+              "notes": "#38bdf8", "closed": "#4ade80", "reopened": "#fb923c"}
+
+
+def case_history_html(events) -> str:
+    """The case's audit trail as a timeline: newest first, one dot per kind."""
+    rows = []
+    for ev in events:
+        dot = _EVENT_DOT.get(ev.kind, "#94a3b8")
+        rows.append(
+            f'<div style="display:flex;gap:10px;align-items:flex-start;padding:3px 0">'
+            f'<span style="flex:0 0 auto;width:9px;height:9px;border-radius:50%;'
+            f'background:{dot};margin-top:6px"></span>'
+            f'<div style="line-height:1.35"><b>{escape(ev.detail)}</b><br>'
+            f'<small style="opacity:.65">{_stamp(ev.created_at)}</small></div></div>')
+    return compact(
+        '<div class="fa-root"><div style="display:flex;flex-direction:column;gap:2px">'
+        + "".join(rows) + '</div></div>')
