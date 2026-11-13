@@ -18,6 +18,7 @@ from src.artifacts import load_engine, load_run  # noqa: E402
 from src.audit import AuditLog  # noqa: E402
 from src.cases import CaseStore  # noqa: E402
 from src.decision import PRESETS, CostConfig, Policy  # noqa: E402
+from src.tools import Toolkit  # noqa: E402
 
 MIN_EXPLAIN_RISK = 80.0     # the policy cannot flag anything below this risk (see the review slider)
 CASES_DB = "FRAUD_CASES_DB"  # environment override, used by tests and for throwaway databases
@@ -64,6 +65,17 @@ def get_audit_log(path: str) -> AuditLog:
 def audits() -> AuditLog:
     """The shared audit log at the default (or overridden) location."""
     return get_audit_log(str(audit_path()))
+
+
+def toolkit(tag: str, policy: Policy | None = None, corpus=None) -> Toolkit:
+    """The tool layer (src/tools.py), wired to what this app has already loaded.
+
+    The pages call the same functions a script or a future agent calls; this
+    only supplies the engine, the policy in the sidebar and the two stores at
+    their configured paths.
+    """
+    return Toolkit(get_engine(tag), policy=policy, cases=get_case_store(str(cases_path())),
+                   audit=get_audit_log(str(audit_path())), corpus=corpus, model_tag=tag)
 
 
 # --------------------------------------------------------------------------- #

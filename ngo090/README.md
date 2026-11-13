@@ -226,6 +226,32 @@ For each alert the app reports the facts that pushed the score up or down. The m
 
 Explanations are only computed for transactions at or above risk 80, which is the range the policy can actually flag; this keeps the replay fast. They describe what the engine reacted to, not proof of fraud.
 
+### 7.7 Tool layer
+
+Everything the dashboard does is also available as a small, deterministic, Streamlit-free API in `src/tools.py`. A `Toolkit` bundles one risk engine, one policy, the case store and (optionally) a corpus of transactions to compare against, and exposes the functions the app itself is built on:
+
+| Function | What it answers | Writes |
+| --- | --- | --- |
+| `score_transaction(tx)` | the 0–100 risk and which detector drove it | no |
+| `assess_risk(tx)` | the policy's action and the rule that fired | no |
+| `explain_transaction(tx)` | the facts that raised and lowered the risk | no |
+| `find_related_transactions(tx)` | similar transactions, each with the reasons it matched | no |
+| `create_case(tx)` | keep a transaction for investigation (idempotent per open case) | yes |
+| `get_case(case_id)` | a case and its full history | no |
+| `update_case(case_id, ...)` | resolution, priority, notes, open/close | yes |
+
+Inputs are forgiving: a transaction may be a dict, a pandas `Series` or a DataFrame row. Results are dataclasses whose `to_dict()` is JSON-safe, so a script, a notebook or a future agent can consume them directly. The same inputs always give the same outputs; only the case functions write, and they write in one SQLite transaction each.
+
+The dashboard calls exactly these functions — the single-transaction form and the alert pop-up call `explain_transaction`, the alert pop-up's "Related transactions" table calls `find_related_transactions`, and case creation and every case edit on the Cases page go through `create_case` / `update_case` — so there is one behaviour, not a UI copy and a tool copy. The same functions also work without Streamlit:
+
+```python
+from src.tools import open_toolkit
+
+tools = open_toolkit(".")   # preferred trained run + data/cases.db + data/audit.db
+print(tools.assess_risk({"type": "TRANSFER", "amount": 250000,
+                         "oldbalanceOrg": 250000, "oldbalanceDest": 0}).to_dict())
+```
+
 ## 8. Tests
 
 ```bash
@@ -233,7 +259,7 @@ pytest                 # everything, about 30 s
 pytest -m "not slow"   # the fast suite only, about 15 s
 ```
 
-The fast suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift statistics, feature engineering, the processing and validation path, invalid-input handling, generator reproducibility, live-stream state and scoring consistency between the single-transaction and batch paths. It builds its own small engine from synthetic data, so it needs neither the PaySim CSV nor the trained model files.
+The fast suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift statistics, feature engineering, the processing and validation path, invalid-input handling, generator reproducibility, live-stream state and scoring consistency between the single-transaction and batch paths, and the tool layer (`tests/test_tools.py`: Streamlit-free importing, deterministic scoring, scoring parity with the dashboard, JSON-safe results, case idempotency). It builds its own small engine from synthetic data, so it needs neither the PaySim CSV nor the trained model files.
 
 Tests marked `slow` are integration tests that need more: the end-to-end app tests (`tests/test_ui_modes.py`) load the real trained engine and drive mode switching, alert selection and session-state upgrades headlessly, plus the training smoke test and the long drift-monitor run. They are skipped automatically when no trained run exists.
 
@@ -257,10 +283,12 @@ ngo090/
 ├── run_local.py              # Windows launcher (works around a certificate-store error)
 ├── app/
 │   ├── app.py                # entry point, sidebar navigation, page transitions
-│   ├── common.py             # cached loaders, policy and cost widgets
+│   ├── common.py             # cached loaders, policy and cost widgets, the tool layer
 │   ├── mode_replay.py        # mode 1: historical replay
 │   ├── mode_live.py          # mode 2: live simulation
 │   ├── mode_testing.py       # mode 3: transaction testing
+│   ├── mode_cases.py         # workspace: investigation cases
+│   ├── mode_audit.py         # workspace: the decision log
 │   └── ui.py                 # HTML/CSS/SVG builders for the dashboards
 ├── src/
 │   ├── features.py           # data loading and feature engineering (shared with training)
@@ -270,6 +298,9 @@ ngo090/
 │   ├── processing.py         # validate, score, decide, explain a batch or a form
 │   ├── predict.py            # one transaction in, one prediction out
 │   ├── explain.py            # occlusion-based reasons
+│   ├── tools.py              # the tool layer: score / assess / explain / related / cases
+│   ├── cases.py              # investigation cases and their history (SQLite)
+│   ├── audit.py              # the append-only decision log (SQLite)
 │   ├── monitor.py            # replay state -> dashboard numbers
 │   ├── replay.py             # replay window and sampling
 │   ├── live.py               # the live stream: clock, catch-up, decisions

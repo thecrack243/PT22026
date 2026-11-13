@@ -11,6 +11,7 @@ import streamlit as st
 import ui
 from common import cases_path, get_case_store
 from src.cases import PRIORITIES, PRIORITY_LABELS, STATUSES, STATUS_LABELS, CaseStore, case_id
+from src.tools import Toolkit, ToolError
 
 ALL = "All"
 STATES = ("Open", "Closed")
@@ -60,6 +61,7 @@ def open_case(number: int, store: CaseStore) -> None:
     """Pop-up with the case, its resolution, priority and notes."""
     case = store.get(number)
     title = f"Case {case_id(number)}" + (" · Closed" if case is not None and case.closed else "")
+    tools = Toolkit(cases=store)                    # the same update_case an agent calls
 
     @st.dialog(title, width="large")
     def _show() -> None:
@@ -109,12 +111,17 @@ def open_case(number: int, store: CaseStore) -> None:
                 # here (like the save buttons) lets the st.rerun below refresh all.
                 if st.button("Reopen case", key=f"reopen_case_{case.number}",
                              help="Puts the case back to work: open again, with the same resolution."):
-                    store.update(case.case_id, closed=False)
+                    tools.update_case(case.case_id, state="open")
                     st.rerun()
 
         if saved or saved_closed:
-            updated = store.update(case.case_id, status=status, notes=notes, priority=priority,
-                                   closed=saved_closed and not case.closed)
+            try:
+                updated = tools.update_case(
+                    case.case_id, status=status, notes=notes, priority=priority,
+                    state="closed" if saved_closed and not case.closed else None).case
+            except ToolError as exc:                 # the store's vocabulary changed under us
+                st.error(str(exc))
+                return
             st.session_state["case_to_open"] = updated.number   # the pop-up shows the saved state
             st.toast(f"{updated.case_id} saved · {updated.state_label}")
             st.rerun()

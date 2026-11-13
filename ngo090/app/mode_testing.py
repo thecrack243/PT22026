@@ -9,8 +9,8 @@ import streamlit as st
 import ui
 from common import render_costs_popover, render_policy_popover
 from src.decision import Policy
-from src.predict import predict_one
 from src.processing import MAX_ROWS, ProcessedBatch, process_frame, summarize_batch, template_csv
+from src.tools import Toolkit
 
 TYPES = ["TRANSFER", "CASH_OUT", "PAYMENT", "CASH_IN", "DEBIT"]
 EXAMPLES = {
@@ -60,7 +60,8 @@ def _render_single(engine, policy: Policy) -> None:
           "oldbalanceOrg": st.session_state.tx_sender, "oldbalanceDest": st.session_state.tx_receiver,
           "hour": st.session_state.tx_hour}
     try:
-        prediction = predict_one(engine, tx, policy)
+        # The same tool an agent or a script calls, not a UI-only shortcut.
+        prediction = Toolkit(engine, policy=policy).explain_transaction(tx)
     except ValueError as exc:
         st.error(str(exc))
         return

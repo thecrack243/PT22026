@@ -33,6 +33,19 @@ class Prediction:
     notes: list[str] = field(default_factory=list)
 
 
+@dataclass
+class Evaluation:
+    """A prediction plus the engine details behind it (see evaluate_one).
+
+    The UI only needs the prediction; the tool layer (src/tools.py) also
+    reports which detector drove the score and each detector's raw output, so
+    an agent can see more than the final number without rescoring.
+    """
+    prediction: Prediction
+    signal: str = ""                                          # main detector, plain language
+    components: dict[str, float] = field(default_factory=dict)  # raw score per base model
+
+
 def validate_transaction(tx: dict) -> tuple[dict, list[str]]:
     """Clean a raw transaction dict. Returns (clean values, list of error messages)."""
     errors: list[str] = []
@@ -66,17 +79,23 @@ def validate_transaction(tx: dict) -> tuple[dict, list[str]]:
     return clean, errors
 
 
-def predict_one(engine: RiskEngine, tx: dict, policy: Policy | None = None, top_k: int = 3) -> Prediction:
-    """Score one transaction. Raises ValueError listing every problem with the input."""
+def evaluate_one(engine: RiskEngine, tx: dict, policy: Policy | None = None,
+                 top_k: int = 3, explain: bool = True) -> Evaluation:
+    """Score one transaction and return the prediction with the engine's detail.
+
+    `explain=False` skips the (comparatively expensive) reason calculation,
+    which is all a score or a decision needs.
+    """
     clean, errors = validate_transaction(tx)
     if errors:
         raise ValueError(" ".join(errors))
     policy = policy or DEFAULT_POLICY
 
     if clean["type"] not in KEEP_TYPES:
-        return Prediction(risk=0.0, decision=APPROVE, applicable=False,
-                          notes=[f"{clean['type']} transactions have no fraud examples in this dataset, so the engine "
-                                 "does not score them. This does not mean they are safe in real life."])
+        return Evaluation(Prediction(
+            risk=0.0, decision=APPROVE, applicable=False,
+            notes=[f"{clean['type']} transactions have no fraud examples in this dataset, so the engine "
+                   "does not score them. This does not mean they are safe in real life."]))
 
     df = engine_frame(pd.DataFrame([{
         "step": clean["hour"] + 1,                 # step 1 is hour 0 of day 1
@@ -84,7 +103,16 @@ def predict_one(engine: RiskEngine, tx: dict, policy: Policy | None = None, top_
         "oldbalanceOrg": clean["oldbalanceOrg"], "oldbalanceDest": clean["oldbalanceDest"],
     }]))
     out = engine.score(df)
-    up, down = explain_one(engine, out.features, top_k=top_k)
     risk = float(out.risk[0])
-    return Prediction(risk=risk, decision=decide_one(risk, policy), applicable=True,
-                      reasons_up=up, reasons_down=down)
+    up, down = explain_one(engine, out.features, top_k=top_k) if explain else ([], [])
+    return Evaluation(
+        Prediction(risk=risk, decision=decide_one(risk, policy), applicable=True,
+                   reasons_up=up, reasons_down=down),
+        signal=str(out.signal[0]),
+        components={name: float(value) for name, value in out.components.iloc[0].items()},
+    )
+
+
+def predict_one(engine: RiskEngine, tx: dict, policy: Policy | None = None, top_k: int = 3) -> Prediction:
+    """Score one transaction. Raises ValueError listing every problem with the input."""
+    return evaluate_one(engine, tx, policy, top_k=top_k).prediction

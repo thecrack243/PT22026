@@ -17,7 +17,7 @@ from common import (audits, cases_path, get_case_store, get_engine, popover, ren
 from src.cases import auto_open
 from src.decision import APPROVE, Policy
 from src.live import LiveSettings, LiveStream, clock_label
-from src.predict import predict_one
+from src.tools import Toolkit
 
 TICK_SECONDS = 1.0
 AWAY_MINUTES = 20           # a catch-up longer than this is reported as "while you were away"
@@ -176,13 +176,11 @@ def _prediction(engine, row, policy):
     if int(row.id) not in cache:
         if len(cache) > 300:
             cache.clear()
-        cache[int(row.id)] = predict_one(engine, {
-            "type": row.type, "amount": row.amount, "oldbalanceOrg": row.oldbalanceOrg,
-            "oldbalanceDest": row.oldbalanceDest, "hour": int(row.hour)}, policy)
+        cache[int(row.id)] = Toolkit(engine, policy=policy).explain_transaction(row)
     return cache[int(row.id)]
 
 
-def _create_case(txn_id: int) -> None:
+def _create_case(txn_id: int, engine, policy: Policy) -> None:
     """Copy this alert into a durable case and jump straight to it.
 
     Runs in the pop-up body after the button click (not in an on_click
@@ -191,22 +189,19 @@ def _create_case(txn_id: int) -> None:
     The st.rerun() right after turns this into a full run, where the Cases
     page opens the new pop-up and the sidebar highlight follows.
     """
+    stream = st.session_state.get("live_stream")
+    row = stream.get(txn_id) if stream is not None else None
+    if row is None:                              # trimmed away between click and rerun
+        return
     store = get_case_store(str(cases_path()))
-    case = store.open_for(txn_id)                    # clicked twice before the page redrew
-    if case is None:
-        stream = st.session_state.get("live_stream")
-        row = stream.get(txn_id) if stream is not None else None
-        if row is None:                              # trimmed away between click and rerun
-            return
-        case = store.create(txn_id, float(row.risk), str(row.decision), str(row.reason),
-                            source="live", amount=float(row.amount), tx_type=str(row.type))
+    case = Toolkit(engine, policy=policy, cases=store).create_case(row, source="live").case
     st.session_state.mode = "Cases"                  # the sidebar highlight follows on this run
     st.session_state["case_to_open"] = case.number   # the case pop-up opens on the Cases page
     st.session_state["alert_to_open"] = None         # do not re-open this alert pop-up later
     st.rerun()
 
 
-def case_action(row) -> None:
+def case_action(row, engine, policy: Policy) -> None:
     """Offer to keep this alert as an investigation case (stored on disk).
 
     The alert itself is ephemeral: rows are trimmed and a restart forgets the
@@ -222,7 +217,38 @@ def case_action(row) -> None:
 
     if st.button("Open investigation case", key=f"open_case_{int(row.id)}", width="stretch",
                  icon=":material/add_task:"):
-        _create_case(int(row.id))
+        _create_case(int(row.id), engine, policy)
+
+
+def _related_panel(row, engine, policy: Policy) -> None:
+    """What else in the feed looks like this alert (the find_related tool)."""
+    stream = st.session_state.get("live_stream")
+    corpus = stream.rows if stream is not None else None
+    if corpus is None or corpus.empty:
+        return
+    found = Toolkit(engine, policy=policy, corpus=corpus).find_related_transactions(row, limit=4)
+    title = f"Related transactions · {len(found.items)}" if found.items else "Related transactions"
+    with st.expander(title):
+        if not found.items:
+            st.caption("Nothing similar has arrived in this feed yet.")
+            return
+        st.dataframe(
+            [{"Transaction": f"#{item.transaction['id']}",
+              "Type": item.transaction["type"].replace("_", " ").title(),
+              "Amount": f"{item.transaction['amount']:,.0f}",
+              "Risk": "-" if item.risk is None else f"{item.risk:.1f}",
+              "Decision": (item.decision or "").title(),
+              "Why": ", ".join(r for r in item.relation if not r.startswith("same type"))} for item in found.items],
+            hide_index=True, width="stretch",
+            column_config={
+                "Transaction": st.column_config.TextColumn(width="small"),
+                "Type": st.column_config.TextColumn(width="small"),
+                "Amount": st.column_config.TextColumn(width="small"),
+                "Risk": st.column_config.TextColumn(width="small"),
+                "Decision": st.column_config.TextColumn(width="small"),
+                "Why": st.column_config.TextColumn(width="large"),
+            })
+        st.caption("Ranked by shared evidence, not proof of a link. Each row says why it matched.")
 
 
 def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
@@ -249,7 +275,8 @@ def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
         chain = log.chain(int(row.id), cases=store, session=getattr(stream, "session", None))
         st.markdown(ui.decision_record_html(record, chain["policy"], chain["cases"]),
                     unsafe_allow_html=True)
-        case_action(row)
+        _related_panel(row, engine, policy)
+        case_action(row, engine, policy)
 
     _show()
 
