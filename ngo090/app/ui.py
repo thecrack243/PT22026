@@ -193,13 +193,16 @@ div[class*="st-key-case_list"]::-webkit-scrollbar{width:10px;}
 div[class*="st-key-case_list"]::-webkit-scrollbar-thumb{background:rgba(120,160,220,.35);border-radius:8px;}
 div[class*="st-key-case_list"]::-webkit-scrollbar-thumb:hover{background:rgba(120,160,220,.55);}
 div[class*="st-key-case_list"]::-webkit-scrollbar-track{background:transparent;}
-div[class*="st-key-case_row_"]{width:100% !important;height:100px !important;}
+/* flex-shrink:0 is essential now the list is a scroll container: as a flex
+   column with a capped height the rows would shrink (100px -> 84px) and the
+   cards would touch each other, whatever their margin says. */
+div[class*="st-key-case_row_"]{width:100% !important;height:100px !important;flex-shrink:0 !important;}
 div[class*="st-key-case_row_"] .stButton{width:100% !important;height:100px !important;}
 div[class*="st-key-case_row_"] button{opacity:0 !important;width:100% !important;height:100px !important;
 padding:0 !important;margin:0 !important;border:none !important;box-shadow:none !important;
 position:relative;z-index:10;cursor:pointer;}
 div[data-testid="stElementContainer"]:has(.fa-case-card){
-margin-top:-100px !important;margin-bottom:12px !important;height:100px !important;}
+margin-top:-100px !important;margin-bottom:16px !important;height:100px !important;flex-shrink:0 !important;}
 .fa-case-card{height:100px;padding:16px 22px;cursor:pointer;
 display:flex;flex-direction:column;justify-content:space-evenly;row-gap:8px;}
 /* hover feedback: highlight the card that sits over the hovered button */
