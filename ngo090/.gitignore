@@ -36,3 +36,4 @@ Thumbs.db
 
 # WorkBuddy session data
 /.workbuddy/
+.pytest_tmp/

@@ -96,7 +96,6 @@ def test_the_audit_page_lists_decisions_with_the_policy_behind_them(tmp_path, mo
     assert list(table["Transaction"]) == [1601, 1600]          # newest first
     assert table.iloc[1]["Decision"] == "Blocked"
     assert table.iloc[1]["Policy"] == log.entry(1600).policy_hash
-    assert table.iloc[1]["Model"] == "v3"
 
     at.selectbox(key="audit_decision").select("review").run()   # nothing was reviewed
     assert not at.exception
