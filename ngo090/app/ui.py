@@ -184,14 +184,15 @@ card) carries the click, the card is all the analyst sees. The key
 prefix case_row_ (never case_) keeps this away from the filter
 widgets, which are keyed case_status, case_state, ... */
 div[data-testid="stVerticalBlock"]:has(.fa-case-card){gap:0 !important;}
-div[class*="st-key-case_row_"]{width:100% !important;height:88px !important;}
-div[class*="st-key-case_row_"] .stButton{width:100% !important;height:88px !important;}
-div[class*="st-key-case_row_"] button{opacity:0 !important;width:100% !important;height:88px !important;
+div[class*="st-key-case_row_"]{width:100% !important;height:100px !important;}
+div[class*="st-key-case_row_"] .stButton{width:100% !important;height:100px !important;}
+div[class*="st-key-case_row_"] button{opacity:0 !important;width:100% !important;height:100px !important;
 padding:0 !important;margin:0 !important;border:none !important;box-shadow:none !important;
 position:relative;z-index:10;cursor:pointer;}
 div[data-testid="stElementContainer"]:has(.fa-case-card){
-margin-top:-88px !important;margin-bottom:10px !important;height:88px !important;}
-.fa-case-card{height:88px;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;}
+margin-top:-100px !important;margin-bottom:12px !important;height:100px !important;}
+.fa-case-card{height:100px;padding:16px 22px;cursor:pointer;
+display:flex;flex-direction:column;justify-content:space-evenly;row-gap:8px;}
 /* hover feedback: highlight the card that sits over the hovered button */
 div[class*="st-key-case_row_"] button:hover + div[data-testid="stElementContainer"] .fa-case-card{
 border-color:rgba(96,165,250,.55) !important;box-shadow:0 0 18px rgba(59,130,246,.25);}
