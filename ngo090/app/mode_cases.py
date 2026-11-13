@@ -158,8 +158,6 @@ def render(header, store: CaseStore) -> None:
         st.markdown('<div class="fa-note">No case matches these filters.</div>', unsafe_allow_html=True)
         return
 
-    st.markdown(f'<div class="fa-note" style="margin:14px 2px 12px">{len(cases):,} case(s), '
-                f'most recently updated first</div>', unsafe_allow_html=True)
     with st.container(border=True):
         for case in cases:
             # The card is the button: an invisible native button (keyed
