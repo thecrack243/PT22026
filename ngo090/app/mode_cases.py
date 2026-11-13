@@ -162,10 +162,15 @@ def render(header, store: CaseStore) -> None:
                 f'most recently updated first</div>', unsafe_allow_html=True)
     with st.container(border=True):
         for case in cases:
-            # stretch: every row uses the full width, instead of shrinking to
-            # its own text and leaving a ragged empty strip on the right.
-            st.button(ui.case_label(case), key=f"case_{case.number}", width="stretch",
-                      on_click=_open, args=(case.number,))
+            # The card carries the information (two lines: ids/amount and
+            # type/risk, then state/resolution and priority); the Open button
+            # is what the analyst clicks to investigate.
+            row = st.columns([1.0, 0.11], gap="small", vertical_alignment="center")
+            with row[0]:
+                st.markdown(ui.case_card_html(case), unsafe_allow_html=True)
+            with row[1]:
+                st.button("Open", key=f"case_{case.number}", width="stretch",
+                          on_click=_open, args=(case.number,))
 
     # The pop-up has to be re-created on every run while it is open, otherwise
     # editing the form inside it (a full rerun) would throw it away.

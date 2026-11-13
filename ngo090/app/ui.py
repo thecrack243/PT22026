@@ -806,12 +806,30 @@ def _stamp(value: str) -> str:
         return "unknown"
 
 
-def case_label(case) -> str:
-    """One line per case in the list: enough to decide whether to open it."""
-    resolution = _STATUS_LABEL[case.status]
-    state = "Closed · " + resolution if case.closed else resolution
-    return (f"{case.case_id}  ·  #{int(case.txn_id)}  ·  risk {case.risk:.1f}  ·  "
-            f"{case.decision_label}  ·  {state}  ·  {_PRIORITY_LABEL[case.priority]}")
+def case_card_html(case) -> str:
+    """A two-line case card for the list.
+
+    Top line: case id and transaction on the left, type and risk on the right.
+    Bottom line: state and resolution on the left, priority on the right.
+    """
+    amount = f"{case.amount:,.2f}" if case.amount else "-"
+    tx_type = (case.tx_type or "-").replace("_", " ").title()
+    return compact(
+        f'<div class="fa-root"><div class="fa-card" style="padding:14px 18px;margin:6px 0">'
+        # first line: who, what, how much | type and score
+        f'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">'
+        f'<div style="font-size:15px"><b>{case.case_id}</b>'
+        f'<span style="color:#8fa3c2"> &middot; #{int(case.txn_id)}</span>'
+        f'<span class="fa-tag {case.decision}" style="margin-left:10px">{escape(case.decision_label)}</span>'
+        f'<b style="margin-left:10px">{amount}</b></div>'
+        f'<div style="color:#8fa3c2;font-size:13px">{escape(tx_type)} &middot; risk {case.risk:.1f}</div></div>'
+        # second line: where the investigation stands | how urgent it is
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">'
+        f'<div style="display:flex;gap:8px">'
+        f'<span class="fa-tag {"closed" if case.closed else "open"}">{case.state_label}</span>'
+        f'<span class="fa-tag {case.status}">{_STATUS_LABEL[case.status]}</span></div>'
+        f'<span class="fa-tag prio-{case.priority}">{_PRIORITY_LABEL[case.priority]} priority</span></div>'
+        f'</div></div>')
 
 
 def cases_overview_html(counts: dict) -> str:

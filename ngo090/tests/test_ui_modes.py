@@ -132,18 +132,24 @@ def test_the_cases_page_clear_button_resets_the_filters(tmp_path, monkeypatch):
                                             explanation="unit test")
     at = page(mode="Cases")
     assert not at.exception
-    assert any("C-0001" in b.label for b in at.button)
+
+    def listed(at):
+        """The case id shows in a card markdown, and its Open button exists."""
+        shown = any("C-0001" in m.value for m in at.markdown)
+        return shown and at.button(key="case_1") is not None
+
+    assert listed(at)
 
     at.selectbox(key="case_status").select("investigating").run()
     at.text_input(key="case_search").set_value("zzz").run()
-    assert not any("C-0001" in b.label for b in at.button)   # the filters actually filtered
+    assert not any("C-0001" in m.value for m in at.markdown)   # the filters actually filtered
 
     at.button(key="case_clear").click().run()
     assert not at.exception
     assert at.selectbox(key="case_status").value == "All"
     assert at.selectbox(key="case_priority").value == "All"
     assert at.text_input(key="case_search").value == ""
-    assert any("C-0001" in b.label for b in at.button)       # the case is back
+    assert listed(at)                                          # the case is back
 
 
 def test_the_case_lifecycle_from_the_pop_up(tmp_path, monkeypatch):
