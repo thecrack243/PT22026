@@ -268,6 +268,16 @@ What the data does support is already in the tool layer: `find_related_transacti
 
 The account-shaped tools belong to the bank-card fraud version of this system, where a card and a merchant are real, persistent entities with history. There, the same `Toolkit` gains `search_transactions(account=...)`, `account_velocity(...)` and `compare_to_history(...)` without touching the decision, case or audit layers — those are already transaction-shaped and would stay as they are.
 
+### 7.9 The investigation assistant and its approval gate
+
+One assistant, not autonomous agents (`src/agent.py`). It runs on the same tool layer the UI uses and does seven things for a case: receives it, requests the transaction details, checks related activity, asks the Risk Manager for a fresh assessment, summarizes the evidence, recommends an action and files a proposal. It **reads everything and writes nothing**: the only thing it can produce is a row in an append-only proposal queue (`src/proposals.py`), and the Risk Manager — the deterministic policy — keeps the actual decision.
+
+The recommendation comes from named rules, not from a model: R1 escalates blocked cases that lack urgent priority, R2 leaves a correctly-triaged case alone, R5 escalates an approved transaction that sits in a suspicious cluster (flagged as a policy override), R6 proposes closing a false positive when the policy approves and nothing supports the alert, R7 keeps everything else open. If the fresh assessment disagrees with the numbers recorded at open time, both are shown instead of quietly overwritten.
+
+A proposal that would change the case in a way the policy contradicts carries an override flag, and the Approvals page (a new workspace page) requires an explicit override checkbox before such a proposal can be approved. Approving applies the change through `update_case`, records who approved it and appends the decision to the case's own history; rejecting touches nothing.
+
+An optional language-model writer only rephrases the narrative. It sees nothing but the evidence list, and any reply that introduces a number the evidence does not contain is discarded in favour of the deterministic template — a failed or hallucinating writer degrades to the template wording, recorded as such. Everything the assistant did is shown on screen as a step trace with timings, an evidence list with the tool each fact came from, and an explicit "what was not checked, and why" section.
+
 ## 8. Tests
 
 ```bash
@@ -275,7 +285,7 @@ pytest                 # everything, about 30 s
 pytest -m "not slow"   # the fast suite only, about 15 s
 ```
 
-The fast suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift statistics, feature engineering, the processing and validation path, invalid-input handling, generator reproducibility, live-stream state and scoring consistency between the single-transaction and batch paths, and the tool layer (`tests/test_tools.py`: Streamlit-free importing, deterministic scoring, scoring parity with the dashboard, JSON-safe results, case idempotency). It builds its own small engine from synthetic data, so it needs neither the PaySim CSV nor the trained model files.
+The fast suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift statistics, feature engineering, the processing and validation path, invalid-input handling, generator reproducibility, live-stream state, scoring consistency between the single-transaction and batch paths, the tool layer (`tests/test_tools.py`: Streamlit-free importing, deterministic scoring, scoring parity with the dashboard, JSON-safe results, case idempotency), the proposal queue (`tests/test_proposals.py`: supersede, decide-once, override gating) and the assistant (`tests/test_agent.py`: rule behaviour, evidence provenance, read-only guarantee, the number guard on the optional writer, approval through the tool layer). It builds its own small engine from synthetic data, so it needs neither the PaySim CSV nor the trained model files.
 
 Tests marked `slow` are integration tests that need more: the end-to-end app tests (`tests/test_ui_modes.py`) load the real trained engine and drive mode switching, alert selection and session-state upgrades headlessly, plus the training smoke test and the long drift-monitor run. They are skipped automatically when no trained run exists.
 
@@ -305,6 +315,7 @@ ngo090/
 │   ├── mode_testing.py       # mode 3: transaction testing
 │   ├── mode_cases.py         # workspace: investigation cases
 │   ├── mode_audit.py         # workspace: the decision log
+│   ├── mode_agent.py         # workspace: the assistant's approval queue
 │   └── ui.py                 # HTML/CSS/SVG builders for the dashboards
 ├── src/
 │   ├── features.py           # data loading and feature engineering (shared with training)
@@ -315,6 +326,8 @@ ngo090/
 │   ├── predict.py            # one transaction in, one prediction out
 │   ├── explain.py            # occlusion-based reasons
 │   ├── tools.py              # the tool layer: score / assess / explain / related / cases
+│   ├── agent.py              # the read-only investigation assistant and its rules
+│   ├── proposals.py          # the append-only proposal queue (human approval) (SQLite)
 │   ├── cases.py              # investigation cases and their history (SQLite)
 │   ├── audit.py              # the append-only decision log (SQLite)
 │   ├── monitor.py            # replay state -> dashboard numbers
