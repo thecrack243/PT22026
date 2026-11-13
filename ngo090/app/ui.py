@@ -495,7 +495,7 @@ def header_html(state: str, period: str, title: str) -> str:
     label, dot = {"ready": ("Ready", "idle"), "playing": ("Replay running", "live"),
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
                   "testing": ("Ready to test", "live"), "live": ("Simulated live", "live"),
-                  "cases": ("Stored on disk", "done")}[state]
+                  "cases": ("Stored on disk", "done"), "audit": ("Append-only", "done")}[state]
     return compact(
         f'<div class="fa-root"><div class="fa-head"><div>'
         f'<div class="fa-ptitle">{escape(title)}</div>'
@@ -815,6 +815,79 @@ def alert_hint_html() -> str:
 def alerts_title_html(n_alerts: int) -> str:
     return compact(f'<div class="fa-root"><div class="fa-ctitle" style="margin-bottom:4px">{icon("bell", "#5aa2ff", 24)}'
                    f'<span>Alerts</span><div class="fa-legend"><span>{n_alerts:,} raised so far</span></div></div></div>')
+
+# --------------------------------------------------------------------------- #
+# Audit log
+# --------------------------------------------------------------------------- #
+_DECISION_TAG = {"block": "fraud", "review": "review", "approve": "legit"}
+
+
+def policy_line(snapshot: dict) -> str:
+    """One readable line for a policy version: the two thresholds and the capacity."""
+    from src.audit import threshold_text
+    block = snapshot.get("block_threshold")
+    review = snapshot.get("review_min_score")
+    block_txt = "never" if block is None else f"from {threshold_text(block)}"
+    review_txt = "none" if review is None else f"from {threshold_text(review)}"
+    return (f"Block {block_txt} &middot; Review {review_txt} &middot; "
+            f"{int(snapshot.get('daily_capacity', 0)):,}/day")
+
+
+def policy_card_html(version: dict) -> str:
+    """One policy version: its hash, when it came into force and what it decided."""
+    when = _stamp(version.get("first_seen", ""))
+    return compact(
+        f'<div class="fa-root"><div class="fa-card" style="padding:12px 16px">'
+        f'<div style="display:flex;justify-content:space-between;gap:10px">'
+        f'<b style="font-family:ui-monospace,monospace">policy {version["hash"]}</b>'
+        f'<span class="fa-note">{version["decisions"]:,} decision(s)</span></div>'
+        f'<div style="margin-top:6px;font-size:13px">{policy_line(version["snapshot"])}</div>'
+        f'<div class="fa-note" style="margin-top:4px">Since {when}</div>'
+        f'</div></div>')
+
+
+def audit_counts_html(counts: dict) -> str:
+    """The numbers of the log, in the same pill row the cases page uses."""
+    items = (("Blocked", "block", counts.get("block", 0), "#fb7185"),
+             ("Sent to review", "review", counts.get("review", 0), "#fbbf24"),
+             ("Approved", "approve", counts.get("approve", 0), "#4ade80"),
+             ("Policy versions", "policy", counts.get("policies", 0), "#c084fc"))
+    pills = "".join(f'<div class="fa-pill"><i class="fa-dot" style="background:{dot}"></i>'
+                    f'{escape(label)} <b>{n:,}</b></div>' for label, _, n, dot in items)
+    pills += f'<div class="fa-pill">Decisions logged <b>{counts.get("all", 0):,}</b></div>'
+    return compact(f'<div class="fa-root"><div class="fa-pills2">{pills}</div></div>')
+
+
+def decision_record_html(record, snapshot: dict | None, cases=()) -> str:
+    """The audit row for one transaction, for the alert pop-up.
+
+    Shows what is durable about the decision: when it was written, which model
+    and which policy version produced it -- the parts the live feed forgets.
+    """
+    if record is None:
+        return compact('<div class="fa-root"><div class="fa-note">No audit row for this transaction '
+                       '(it was decided before the log was enabled).</div></div>')
+    facts = [("Recorded", _stamp(record.recorded_at)),
+             ("Model", record.model_tag or "unknown"),
+             ("Policy", record.policy_hash),
+             ("Score", f"{record.score:.1f} / 100"),
+             ("Simulated time", f"D{record.sim_minute // 1440 + 1} "
+                                f"{(record.sim_minute // 60) % 24:02d}:{record.sim_minute % 60:02d}")]
+    kv = "".join(f"<div><span>{k}</span><b>{escape(str(v))}</b></div>" for k, v in facts)
+    policy = ""
+    if snapshot:
+        policy = f'<div class="fa-note" style="margin-top:6px">{policy_line(snapshot)}</div>'
+    linked = ""
+    if cases:
+        tags = "".join(
+            f'<span class="fa-tag {item["case"].status}">{item["case"].case_id} &middot; '
+            f'{escape(item["case"].state_label)}</span> ' for item in cases)
+        linked = f'<div class="fa-sub2">Investigation</div><div>{tags}</div>'
+    return compact(f'<div class="fa-root"><div class="fa-sub2">Decision record</div>'
+                   f'<div class="fa-kv" style="grid-template-columns:repeat(3,1fr)">{kv}</div>'
+                   f'{policy}{linked}'
+                   '<div class="fa-note">Written to the audit database the moment the decision was made. '
+                   'Refreshing the page or restarting the app does not remove it.</div></div>')
 
 # --------------------------------------------------------------------------- #
 # Investigation cases

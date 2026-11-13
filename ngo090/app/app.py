@@ -25,6 +25,7 @@ for _path in (str(_APP_DIR.parent), str(_APP_DIR)):
 import common                      # noqa: E402  (sets up the import paths)
 import streamlit as st             # noqa: E402
 
+import mode_audit                  # noqa: E402
 import mode_cases                  # noqa: E402
 import mode_live                   # noqa: E402
 import mode_replay                 # noqa: E402
@@ -34,10 +35,11 @@ from src.artifacts import discover_runs  # noqa: E402
 
 REPLAY, LIVE, TESTING = "Historical replay", "Live simulation", "Transaction testing"
 CASES = "Cases"                     # the workspace page, not a simulation mode
+AUDIT = "Audit"                     # the decision log: workspace too
 MODES = (LIVE, REPLAY, TESTING)    # the live feed is what greets the analyst
-SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases"}
+SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases", AUDIT: "audit"}
 ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":material/science:",
-        CASES: ":material/folder_shared:"}
+        CASES: ":material/folder_shared:", AUDIT: ":material/receipt_long:"}
 
 st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout="wide",
                    initial_sidebar_state="expanded")
@@ -74,6 +76,10 @@ def render_sidebar(store) -> str:
                   type="primary" if st.session_state.mode == CASES else "secondary",
                   on_click=_switch_to, args=(CASES,),
                   help="Alerts an analyst kept, stored in a local SQLite database.")
+        st.button(AUDIT, key=f"nav_{SLUG[AUDIT]}", icon=ICON[AUDIT], width="stretch",
+                  type="primary" if st.session_state.mode == AUDIT else "secondary",
+                  on_click=_switch_to, args=(AUDIT,),
+                  help="Every decision ever made, with the model and policy version behind it.")
     return st.session_state.mode
 
 
@@ -144,6 +150,8 @@ def main() -> None:
             mode_live.render(header, tag, run, engine)
         elif mode == CASES:
             mode_cases.render(header, store)
+        elif mode == AUDIT:
+            mode_audit.render(header, store)
         else:
             mode_testing.render(header, tag, run, engine)
 

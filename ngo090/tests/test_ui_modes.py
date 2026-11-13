@@ -46,10 +46,10 @@ def test_the_app_lands_on_live_simulation_without_errors():
 
 
 def test_the_sidebar_navigates_between_modes():
-    """The three modes plus Cases are sidebar buttons: clicking one redraws the page."""
+    """The three modes plus the two workspace pages are sidebar buttons: clicking one redraws the page."""
     at = page()
     nav = [b for b in at.sidebar.button if b.key and b.key.startswith("nav_")]
-    assert {b.key for b in nav} == {"nav_live", "nav_replay", "nav_testing", "nav_cases"}
+    assert {b.key for b in nav} == {"nav_live", "nav_replay", "nav_testing", "nav_cases", "nav_audit"}
     assert not at.exception
 
     at.sidebar.button(key="nav_replay").click().run()
@@ -64,6 +64,44 @@ def test_the_sidebar_navigates_between_modes():
     assert not at.exception
     assert at.session_state["mode"] == "Cases"
     assert "Investigation cases" in all_text(at)
+    at.sidebar.button(key="nav_audit").click().run()
+    assert not at.exception
+    assert at.session_state["mode"] == "Audit"
+
+
+def test_the_audit_page_lists_decisions_with_the_policy_behind_them(tmp_path, monkeypatch):
+    """The decision log is readable on its own page, filters included."""
+    import pandas as pd
+
+    from src.audit import AuditLog
+    from src.decision import Policy
+
+    db = tmp_path / "audit.db"
+    monkeypatch.setenv("FRAUD_AUDIT_DB", str(db))
+    log = AuditLog(db)
+    policy = Policy(block_threshold=96.0, review_min_score=90.0, daily_capacity=240)
+    log.record(pd.DataFrame([
+        {"id": 1600, "minute": 520, "amount": 215_000.0, "type": "CASH_OUT",
+         "risk": 99.7, "decision": "block", "reason": "sender emptied into a new account"},
+        {"id": 1601, "minute": 521, "amount": 900.0, "type": "TRANSFER",
+         "risk": 12.0, "decision": "approve", "reason": ""},
+    ]), policy, model_tag="v3", session="s1")
+
+    at = page(mode="Audit")
+    assert not at.exception
+    body = all_text(at)
+    assert "Decisions logged" in body and "Policy versions" in body
+
+    table = at.dataframe[0].value
+    assert list(table["Transaction"]) == [1601, 1600]          # newest first
+    assert table.iloc[1]["Decision"] == "Blocked"
+    assert table.iloc[1]["Policy"] == log.entry(1600).policy_hash
+    assert table.iloc[1]["Model"] == "v3"
+
+    at.selectbox(key="audit_decision").select("review").run()   # nothing was reviewed
+    assert not at.exception
+    assert "No decision matches these filters" in all_text(at)
+    log.close()
 
 
 def test_the_empty_live_charts_do_not_talk_about_the_replay():

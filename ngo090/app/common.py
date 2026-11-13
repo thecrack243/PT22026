@@ -15,11 +15,13 @@ for _p in (str(ROOT), str(APP_DIR)):
 import streamlit as st  # noqa: E402
 
 from src.artifacts import load_engine, load_run  # noqa: E402
+from src.audit import AuditLog  # noqa: E402
 from src.cases import CaseStore  # noqa: E402
 from src.decision import PRESETS, CostConfig, Policy  # noqa: E402
 
 MIN_EXPLAIN_RISK = 80.0     # the policy cannot flag anything below this risk (see the review slider)
 CASES_DB = "FRAUD_CASES_DB"  # environment override, used by tests and for throwaway databases
+AUDIT_DB = "FRAUD_AUDIT_DB"  # same, for the decision log
 
 
 # --------------------------------------------------------------------------- #
@@ -45,6 +47,23 @@ def cases_path() -> Path:
 def get_case_store(path: str) -> CaseStore:
     """One store per database file, shared by every page and session."""
     return CaseStore(path)
+
+
+def audit_path() -> Path:
+    """Where the decision log lives: data/audit.db unless the environment says otherwise."""
+    override = os.environ.get(AUDIT_DB)
+    return Path(override) if override else ROOT / "data" / "audit.db"
+
+
+@st.cache_resource(show_spinner=False)
+def get_audit_log(path: str) -> AuditLog:
+    """One audit log per database file: the live page writes, the audit page reads."""
+    return AuditLog(path)
+
+
+def audits() -> AuditLog:
+    """The shared audit log at the default (or overridden) location."""
+    return get_audit_log(str(audit_path()))
 
 
 # --------------------------------------------------------------------------- #

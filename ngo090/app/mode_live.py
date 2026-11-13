@@ -7,11 +7,12 @@ decision policy affects only transactions that arrive afterwards.
 from __future__ import annotations
 
 import time
+import uuid
 
 import streamlit as st
 
 import ui
-from common import (cases_path, get_case_store, get_engine, popover, render_costs_popover,
+from common import (audits, cases_path, get_case_store, get_engine, popover, render_costs_popover,
                     render_policy_popover)
 from src.cases import auto_open
 from src.decision import APPROVE, Policy
@@ -126,16 +127,21 @@ def _clear_alert() -> None:
     st.session_state.live_selected = None
 
 
-def get_stream(engine) -> LiveStream:
+def get_stream(engine, tag: str = "") -> LiveStream:
     """The running simulation of this browser session (created on first use)."""
     if "live_stream" not in st.session_state:
-        st.session_state.live_stream = LiveStream(engine)
+        st.session_state.live_stream = LiveStream(engine, audit=audits(), model_tag=tag)
     stream = st.session_state.live_stream
     # A stream created by an older version of the app can still be alive in this
     # browser session after a code reload. Give it anything newer versions added,
     # instead of crashing the page.
     if not hasattr(stream, "processed"):
         stream.processed = int(getattr(stream, "proc_count", 0))
+    if getattr(stream, "audit", None) is None:      # created before the audit log existed
+        stream.audit = audits()
+        stream.model_tag = tag
+        stream.session = uuid.uuid4().hex[:8]
+        stream.audit_error = ""
     return stream
 
 
@@ -235,6 +241,14 @@ def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
         engine = get_engine(tag)
         st.markdown(ui.alert_detail_html(row, _prediction(engine, row, policy), policy, show_truth, in_dialog=True),
                     unsafe_allow_html=True)
+        # The durable half of the story: the memory row above disappears with the
+        # page, the audit row does not. Same screen, both versions of the truth.
+        log = audits()
+        record = log.entry(int(row.id), session=getattr(stream, "session", None))
+        store = get_case_store(str(cases_path()))
+        chain = log.chain(int(row.id), cases=store, session=getattr(stream, "session", None))
+        st.markdown(ui.decision_record_html(record, chain["policy"], chain["cases"]),
+                    unsafe_allow_html=True)
         case_action(row)
 
     _show()
@@ -308,6 +322,9 @@ def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show
     if info["new"]:
         # tail() rather than a column slice: the stream trims old rows when it grows.
         _autocase(stream.rows.tail(int(info["new"])))
+    if getattr(stream, "audit_error", ""):
+        st.warning(f"The audit log could not be written ({stream.audit_error}). "
+                   "Decisions keep flowing, but they are not being recorded on disk.")
     if info["caught_up_minutes"] >= AWAY_MINUTES and hasattr(st, "toast"):
         st.toast(f"While you were away, {info['new']:,} simulated transactions arrived "
                  f"and {info['new_alerts']:,} raised an alert.")
@@ -358,7 +375,7 @@ def render(header, tag: str, run, engine) -> None:
         render_alert_popover()
     _save_prefs()
 
-    stream = get_stream(engine)
+    stream = get_stream(engine, tag)
     st.session_state.live_tag = tag
     pending = st.session_state.pop("alert_to_open", None)   # one-shot: the click that asked for the pop-up
     if pending is not None and hasattr(st, "dialog"):

@@ -13,7 +13,9 @@ Behaviour (pure Python, no Streamlit):
 """
 from __future__ import annotations
 
+import sqlite3
 import time
+import uuid
 from dataclasses import dataclass
 
 import numpy as np
@@ -60,7 +62,7 @@ class LiveStream:
     """Generates, scores and stores transactions as simulated time passes."""
 
     def __init__(self, engine: RiskEngine, seed: int | None = None, settings: LiveSettings | None = None,
-                 now: float | None = None):
+                 now: float | None = None, audit=None, model_tag: str = ""):
         self.engine = engine
         self.settings = settings or LiveSettings()
         self.generator = TransactionGenerator(seed)
@@ -73,6 +75,14 @@ class LiveStream:
         self.proc_count = 0
         self.processed = 0               # all-time total; rows are trimmed, this is not
         self.recent_throughput = 0.0
+        # The audit sink (src/audit.py) records every decision durably, together
+        # with the policy that produced it. Transaction ids restart with every
+        # simulation, so this run gets its own id: the log needs both to know
+        # which "#1600" a row refers to.
+        self.audit = audit
+        self.model_tag = model_tag
+        self.session = uuid.uuid4().hex[:8]
+        self.audit_error = ""
 
     # ------------------------------------------------------------------ #
     def advance(self, policy: Policy, now: float | None = None, settings: LiveSettings | None = None) -> dict:
@@ -108,6 +118,7 @@ class LiveStream:
             self.proc_count += len(new)
             self.processed += len(new)
             new_alerts = int((new["decision"] != APPROVE).sum())
+            self._write_audit(new, policy)
             self.rows = new if self.rows.empty else pd.concat([self.rows, new], ignore_index=True)
             if len(self.rows) > MAX_ROWS:
                 self.rows = self.rows.iloc[-int(MAX_ROWS * 0.8):].reset_index(drop=True)
@@ -115,6 +126,22 @@ class LiveStream:
         else:
             self._accrue_only(start_minute, target, policy)
         return {"new": len(new), "new_alerts": new_alerts, "caught_up_minutes": caught_up}
+
+    def _write_audit(self, new: pd.DataFrame, policy: Policy) -> None:
+        """Log this batch of decisions, with the policy that produced them.
+
+        The audit log is a second, durable record: the dashboard can be refreshed
+        and its rows trimmed, but the log keeps every decision forever. If the
+        database is unavailable the simulation must not stop, so a failure is
+        remembered and reported instead of raised.
+        """
+        if self.audit is None:
+            return
+        try:
+            self.audit.record(new, policy, model_tag=self.model_tag, session=self.session)
+            self.audit_error = ""
+        except sqlite3.Error as exc:               # locked or unwritable database
+            self.audit_error = str(exc)
 
     def _mix_psi(self, current_step: int) -> float | None:
         """How far the shape of arriving traffic moved away from the session's start.
