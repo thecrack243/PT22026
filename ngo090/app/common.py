@@ -18,11 +18,14 @@ from src.artifacts import load_engine, load_run  # noqa: E402
 from src.audit import AuditLog  # noqa: E402
 from src.cases import CaseStore  # noqa: E402
 from src.decision import PRESETS, CostConfig, Policy  # noqa: E402
+from src.agent import InvestigationAgent, LLMWriter  # noqa: E402
+from src.proposals import ProposalStore  # noqa: E402
 from src.tools import Toolkit  # noqa: E402
 
 MIN_EXPLAIN_RISK = 80.0     # the policy cannot flag anything below this risk (see the review slider)
 CASES_DB = "FRAUD_CASES_DB"  # environment override, used by tests and for throwaway databases
 AUDIT_DB = "FRAUD_AUDIT_DB"  # same, for the decision log
+PROPOSALS_DB = "FRAUD_PROPOSALS_DB"   # same, for the assistant's recommendations
 
 
 # --------------------------------------------------------------------------- #
@@ -76,6 +79,49 @@ def toolkit(tag: str, policy: Policy | None = None, corpus=None) -> Toolkit:
     """
     return Toolkit(get_engine(tag), policy=policy, cases=get_case_store(str(cases_path())),
                    audit=get_audit_log(str(audit_path())), corpus=corpus, model_tag=tag)
+
+
+# --------------------------------------------------------------------------- #
+# The investigation assistant (src/agent.py, src/proposals.py)
+# --------------------------------------------------------------------------- #
+def proposals_path() -> Path:
+    """Where the assistant's recommendations live: data/proposals.db by default."""
+    override = os.environ.get(PROPOSALS_DB)
+    return Path(override) if override else ROOT / "data" / "proposals.db"
+
+
+@st.cache_resource(show_spinner=False)
+def get_proposal_store(path: str) -> ProposalStore:
+    """One queue per database file: the case pop-up files, the approvals page reads."""
+    return ProposalStore(path)
+
+
+def proposals() -> ProposalStore:
+    return get_proposal_store(str(proposals_path()))
+
+
+def live_feed():
+    """The live stream of this session, or None when the analyst never started one.
+
+    Two things need it: the corpus to compare a transaction against, and the
+    original row (the case only keeps the amount and the type, and the engine
+    needs the balances). Without it the assistant says what it could not check
+    instead of guessing.
+    """
+    stream = st.session_state.get("live_stream")
+    if stream is None or getattr(stream, "rows", None) is None or stream.rows.empty:
+        return None
+    return stream
+
+
+def agent_for(tools: Toolkit) -> InvestigationAgent:
+    """Ready-to-run assistant for this session: live feed in, proposal queue out."""
+    stream = live_feed()
+    return InvestigationAgent(
+        tools, proposals=proposals(),
+        corpus=None if stream is None else stream.rows,
+        lookup=None if stream is None else stream.get,
+        writer=LLMWriter() if LLMWriter.available() else None)
 
 
 # --------------------------------------------------------------------------- #

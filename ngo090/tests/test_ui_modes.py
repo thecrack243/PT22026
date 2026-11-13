@@ -49,7 +49,8 @@ def test_the_sidebar_navigates_between_modes():
     """The three modes plus the two workspace pages are sidebar buttons: clicking one redraws the page."""
     at = page()
     nav = [b for b in at.sidebar.button if b.key and b.key.startswith("nav_")]
-    assert {b.key for b in nav} == {"nav_live", "nav_replay", "nav_testing", "nav_cases", "nav_audit"}
+    assert {b.key for b in nav} == {"nav_live", "nav_replay", "nav_testing", "nav_cases",
+                                    "nav_audit", "nav_approvals"}
     assert not at.exception
 
     at.sidebar.button(key="nav_replay").click().run()
@@ -247,3 +248,126 @@ def test_the_case_lifecycle_from_the_pop_up(tmp_path, monkeypatch):
 
 def _engine():
     return load_engine(ROOT, TAG)
+
+
+# --------------------------------------------------------------------------- #
+# The investigation assistant and its approval queue (src/agent.py)
+# --------------------------------------------------------------------------- #
+def _find_button(at, key):
+    """A button by key, whether it sits on the page or inside a pop-up."""
+    for widget in at.button:
+        if getattr(widget, "key", None) == key:
+            return widget
+    for dialog in at.get("dialog"):
+        for widget in dialog.button:
+            if getattr(widget, "key", None) == key:
+                return widget
+    return None
+
+
+def test_the_approvals_page_starts_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("FRAUD_PROPOSALS_DB", str(tmp_path / "proposals.db"))
+    at = page(mode="Approvals")
+    assert not at.exception
+    assert "No recommendations yet" in all_text(at)
+    assert "investigation assistant" in all_text(at)
+
+
+def test_the_assistant_runs_from_the_case_pop_up_and_waits_for_approval(tmp_path, monkeypatch):
+    """The whole loop through the real widgets: run, file, approve, case moves.
+
+    The point of the test is the last assertion: the case is unchanged by the
+    assistant and changes only after the approval click.
+    """
+    from src.cases import CaseStore
+    from src.decision import Policy
+    from src.live import LiveSettings, LiveStream
+    from src.proposals import ProposalStore
+
+    cases_db = tmp_path / "cases.db"
+    proposals_db = tmp_path / "proposals.db"
+    monkeypatch.setenv("FRAUD_CASES_DB", str(cases_db))
+    monkeypatch.setenv("FRAUD_PROPOSALS_DB", str(proposals_db))
+
+    stream = LiveStream(_engine(), seed=7, now=0.0, settings=LiveSettings(300, 0.03, False, 2.0, False))
+    stream.advance(Policy(), now=30.0)
+    flagged = stream.rows[stream.rows["decision"] != "approve"]
+    assert not flagged.empty, "the stream should raise alerts"
+    # Highest risk first: on this engine's scale that is always >= 95, so the
+    # assistant's rule R3 fires (escalate to urgent) and the approval below has
+    # a visible effect on a case seeded at "low".
+    row = flagged.sort_values("risk", ascending=False).iloc[0]
+
+    store = CaseStore(cases_db)
+    case = store.create(txn_id=int(row.id), risk=float(row.risk), decision=str(row.decision),
+                        amount=float(row.amount), tx_type=str(row.type), source="live",
+                        priority="low", explanation="assistant flow")
+
+    at = page(mode="Cases", live_stream=stream)
+    assert not at.exception
+    _find_button(at, f"case_row_{case.number}").click().run()
+    assert not at.exception
+
+    run = _find_button(at, f"run_agent_{case.number}")
+    assert run is not None, "the pop-up offers the assistant"
+    run.click().run()
+    assert not at.exception
+
+    panel = all_text(at)
+    assert "How it got there" in panel            # the step trace
+    assert "Rule" not in panel or "rule R" in panel
+    unchanged = store.get(case.case_id)
+    assert unchanged.priority == "low" and unchanged.status == "investigating"
+
+    _find_button(at, f"file_agent_{case.number}").click().run()
+    assert not at.exception
+    queue = ProposalStore(proposals_db)
+    pending = queue.pending()
+    assert len(pending) == 1
+    assert pending[0].case_number == case.number
+    assert store.get(case.case_id) == unchanged      # filing is not approving
+
+    queue.close()
+
+    at.session_state["mode"] = "Approvals"
+    at.run()
+    assert not at.exception
+    assert "Awaiting approval" in all_text(at)
+
+    item = ProposalStore(proposals_db).pending()[0]
+    if item.requires_override:
+        at.checkbox(key=f"prop_override_{item.number}").check().run()
+    _find_button(at, f"prop_approve_{item.number}").click().run()
+    assert not at.exception
+
+    moved = store.get(case.case_id)
+    assert moved.priority != "low"                  # the approved change landed
+    assert "Assistant (rules:v1" in moved.notes
+    assert ProposalStore(proposals_db).get(item.number).status == "approved"
+
+
+def test_rejecting_a_proposal_leaves_the_case_untouched(tmp_path, monkeypatch):
+    from src.cases import CaseStore
+    from src.proposals import ProposalStore
+
+    cases_db = tmp_path / "cases.db"
+    proposals_db = tmp_path / "proposals.db"
+    monkeypatch.setenv("FRAUD_CASES_DB", str(cases_db))
+    monkeypatch.setenv("FRAUD_PROPOSALS_DB", str(proposals_db))
+
+    store = CaseStore(cases_db)
+    case = store.create(txn_id=501, risk=97.0, decision="block", amount=1000.0,
+                        tx_type="TRANSFER", source="test", priority="low")
+    queue = ProposalStore(proposals_db)
+    proposal = queue.create(case.case_id, "escalate", rationale="because the policy blocks it",
+                            risk=97.0, policy_decision="block", proposed_priority="urgent",
+                            agent="rules:v1/template")
+    queue.close()
+
+    at = page(mode="Approvals")
+    assert not at.exception
+    _find_button(at, f"prop_reject_{proposal.number}").click().run()
+    assert not at.exception
+
+    assert store.get(case.case_id) == case           # nothing happened to the case
+    assert ProposalStore(proposals_db).get(proposal.number).status == "rejected"

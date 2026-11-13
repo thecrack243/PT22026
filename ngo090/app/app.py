@@ -25,6 +25,7 @@ for _path in (str(_APP_DIR.parent), str(_APP_DIR)):
 import common                      # noqa: E402  (sets up the import paths)
 import streamlit as st             # noqa: E402
 
+import mode_agent                   # noqa: E402
 import mode_audit                  # noqa: E402
 import mode_cases                  # noqa: E402
 import mode_live                   # noqa: E402
@@ -36,10 +37,13 @@ from src.artifacts import discover_runs  # noqa: E402
 REPLAY, LIVE, TESTING = "Historical replay", "Live simulation", "Transaction testing"
 CASES = "Cases"                     # the workspace page, not a simulation mode
 AUDIT = "Audit"                     # the decision log: workspace too
+APPROVALS = "Approvals"             # the assistant's queue: workspace too
 MODES = (LIVE, REPLAY, TESTING)    # the live feed is what greets the analyst
-SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases", AUDIT: "audit"}
+SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases", AUDIT: "audit",
+        APPROVALS: "approvals"}
 ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":material/science:",
-        CASES: ":material/folder_shared:", AUDIT: ":material/receipt_long:"}
+        CASES: ":material/folder_shared:", AUDIT: ":material/receipt_long:",
+        APPROVALS: ":material/fact_check:"}
 
 st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout="wide",
                    initial_sidebar_state="expanded")
@@ -80,6 +84,13 @@ def render_sidebar(store) -> str:
                   type="primary" if st.session_state.mode == AUDIT else "secondary",
                   on_click=_switch_to, args=(AUDIT,),
                   help="Every decision ever made, with the model and policy version behind it.")
+        waiting = common.proposals().counts()["pending"]
+        st.button(f"{APPROVALS} · {waiting}" if waiting else APPROVALS,
+                  key=f"nav_{SLUG[APPROVALS]}", icon=ICON[APPROVALS], width="stretch",
+                  type="primary" if st.session_state.mode == APPROVALS else "secondary",
+                  on_click=_switch_to, args=(APPROVALS,),
+                  help="What the investigation assistant recommends. Nothing changes until a "
+                       "person approves it.")
     return st.session_state.mode
 
 
@@ -149,9 +160,11 @@ def main() -> None:
         elif mode == LIVE:
             mode_live.render(header, tag, run, engine)
         elif mode == CASES:
-            mode_cases.render(header, store)
+            mode_cases.render(header, store, tag)
         elif mode == AUDIT:
             mode_audit.render(header, store)
+        elif mode == APPROVALS:
+            mode_agent.render(header, store)
         else:
             mode_testing.render(header, tag, run, engine)
 

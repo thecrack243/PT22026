@@ -208,6 +208,45 @@ display:flex;flex-direction:column;justify-content:space-evenly;row-gap:8px;}
 /* hover feedback: highlight the card that sits over the hovered button */
 div[class*="st-key-case_row_"] button:hover + div[data-testid="stElementContainer"] .fa-case-card{
 border-color:rgba(96,165,250,.55) !important;box-shadow:0 0 18px rgba(59,130,246,.25);}
+/* Investigation assistant. The panel is deliberately plain: it is a reading
+   surface for evidence, not a dashboard. */
+.fa-assist{border:1px solid rgba(96,140,220,.24);border-radius:16px;padding:16px 18px;
+background:rgba(13,23,44,.72);}
+.fa-assist-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+.fa-badge{font-size:11.5px;font-weight:700;letter-spacing:.7px;text-transform:uppercase;
+padding:3px 9px;border-radius:999px;background:rgba(139,92,246,.16);color:#c4b5fd;
+border:1px solid rgba(139,92,246,.42);}
+.fa-badge.ok{background:rgba(34,197,94,.14);color:#86efac;border-color:rgba(34,197,94,.4);}
+.fa-badge.warn{background:rgba(245,158,11,.14);color:#fcd34d;border-color:rgba(245,158,11,.42);}
+.fa-narr{font-size:14px;line-height:1.62;color:#dbe6f8;margin:0 0 12px;}
+.fa-rec{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 13px;border-radius:12px;
+background:rgba(255,255,255,.035);border:1px solid rgba(96,140,220,.18);margin-bottom:12px;}
+.fa-rec b{font-size:15px;}
+.fa-rec .fa-rule{color:#8fa3c2;font-size:12px;}
+.fa-tag.escalate{background:rgba(245,158,11,.16);color:#fcd34d;border:1px solid rgba(245,158,11,.42);}
+.fa-tag.close_fraud{background:rgba(244,63,94,.18);color:#fda4af;border:1px solid rgba(244,63,94,.4);}
+.fa-tag.close_false_positive{background:rgba(34,197,94,.16);color:#86efac;border:1px solid rgba(34,197,94,.38);}
+.fa-tag.keep_open{background:rgba(148,163,184,.14);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
+.fa-tag.pending{background:rgba(59,130,246,.16);color:#93c5fd;border:1px solid rgba(59,130,246,.38);}
+.fa-tag.approved{background:rgba(34,197,94,.16);color:#86efac;border:1px solid rgba(34,197,94,.38);}
+.fa-tag.rejected{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.26);}
+.fa-evlist{display:flex;flex-direction:column;gap:7px;}
+.fa-ev{display:flex;gap:9px;align-items:flex-start;font-size:13.2px;color:#cfdcf2;line-height:1.45;}
+.fa-ev i{flex:0 0 auto;width:7px;height:7px;border-radius:50%;margin-top:6px;}
+.fa-ev.fact i{background:#22c55e;}.fa-ev.risk i{background:#f43f5e;}
+.fa-ev.related i{background:#f59e0b;}.fa-ev.history i{background:#60a5fa;}
+.fa-ev.gap i{background:#94a3b8;}
+.fa-ev small{color:#7f93b3;font-size:11.5px;margin-left:5px;}
+.fa-gaps{margin-top:12px;padding:11px 13px;border-radius:12px;background:rgba(245,158,11,.08);
+border:1px solid rgba(245,158,11,.3);font-size:12.8px;color:#fde68a;line-height:1.5;}
+.fa-gaps b{color:#fcd34d;}
+.fa-trace{display:flex;flex-direction:column;gap:6px;font-size:12.6px;color:#a9bddb;}
+.fa-trow{display:grid;grid-template-columns:16px 118px minmax(0,1fr) 52px;gap:8px;align-items:baseline;}
+.fa-trow .n{color:#5f7396;font-variant-numeric:tabular-nums;}
+.fa-trow .k{color:#dbe6f8;font-weight:600;}
+.fa-trow .d{color:#93a8c8;}
+.fa-trow .ms{color:#5f7396;text-align:right;font-variant-numeric:tabular-nums;}
+.fa-trow.skip .k{color:#8fa3c2;font-weight:500;}
 </style>
 """
 
@@ -495,7 +534,8 @@ def header_html(state: str, period: str, title: str) -> str:
     label, dot = {"ready": ("Ready", "idle"), "playing": ("Replay running", "live"),
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
                   "testing": ("Ready to test", "live"), "live": ("Simulated live", "live"),
-                  "cases": ("Stored on disk", "done"), "audit": ("Append-only", "done")}[state]
+                  "cases": ("Stored on disk", "done"), "audit": ("Append-only", "done"),
+                  "approvals": ("Human in the loop", "idle")}[state]
     return compact(
         f'<div class="fa-root"><div class="fa-head"><div>'
         f'<div class="fa-ptitle">{escape(title)}</div>'
@@ -998,3 +1038,77 @@ def case_history_html(events) -> str:
     return compact(
         '<div class="fa-root"><div style="display:flex;flex-direction:column;gap:2px">'
         + "".join(rows) + '</div></div>')
+
+
+# --------------------------------------------------------------------------- #
+# Investigation assistant (src/agent.py) and its proposals (src/proposals.py)
+# --------------------------------------------------------------------------- #
+def investigation_html(investigation) -> str:
+    """One investigation: what the assistant read, what it recommends, why.
+
+    The trace is part of the output on purpose. An assistant whose work cannot
+    be audited step by step is not safer than no assistant, and this one has
+    nothing to hide: every line below came from a call to src/tools.py.
+    """
+    rec = investigation.recommendation
+    writer = "template" if investigation.writer == "template" else investigation.writer
+    tags = [f'<span class="fa-badge">{escape(getattr(investigation, "agent", ""))}</span>',
+            f'<span class="fa-badge ok">written by {escape(writer)}</span>']
+    if rec.requires_override:
+        tags.append('<span class="fa-badge warn">overrides the policy</span>')
+
+    evidence = "".join(
+        f'<div class="fa-ev {e.kind}"><i></i><div>{escape(e.text)}'
+        f'<small>{escape(e.source)}</small></div></div>'
+        for e in investigation.evidence)
+
+    gaps = ""
+    if investigation.gaps:
+        items = "".join(f"<div>• {escape(g)}</div>" for g in investigation.gaps)
+        gaps = f'<div class="fa-gaps"><b>What was not checked, and why</b>{items}</div>'
+
+    rows = []
+    for n, step in enumerate(investigation.steps, 1):
+        rows.append(
+            f'<div class="fa-trow{" skip" if not step.ok else ""}"><span class="n">{n}</span>'
+            f'<span class="k">{escape(step.label)}</span>'
+            f'<span class="d">{escape(step.detail)}</span>'
+            f'<span class="ms">{step.ms:.0f} ms</span></div>')
+    trace = "".join(rows)
+
+    return compact(
+        f'<div class="fa-root"><div class="fa-assist">'
+        f'<div class="fa-assist-top">{"".join(tags)}</div>'
+        f'<div class="fa-narr">{escape(investigation.narrative)}</div>'
+        f'<div class="fa-rec"><span class="fa-tag {rec.kind}">{escape(rec.label)}</span>'
+        f'<span class="fa-rule">rule {escape(rec.rule)} · risk {investigation.risk:.1f} · '
+        f'policy says {escape(investigation.policy_decision)}</span></div>'
+        f'<div class="fa-sub2" style="margin-top:4px">Evidence ({len(investigation.evidence)})</div>'
+        f'<div class="fa-evlist">{evidence}</div>'
+        f'{gaps}'
+        f'<div class="fa-sub2">How it got there</div>'
+        f'<div class="fa-trace">{trace}</div>'
+        f'</div></div>')
+
+
+def proposal_card_html(proposal, show_case: bool = True) -> str:
+    """One recommendation waiting for a person: what it would change, and why."""
+    head = (f'<span class="fa-tag {proposal.kind}">{escape(proposal.kind_label)}</span>'
+            f'<span class="fa-tag {proposal.status}">{escape(proposal.status_label)}</span>')
+    title = (f'{escape(proposal.case_id)} · transaction record' if show_case
+             else "Proposal")
+    changes = " · ".join(escape(c) for c in proposal.changes) or "No change to the case"
+    override = ('<div class="fa-gaps" style="margin:10px 0 0"><b>This contradicts the policy.</b>'
+                f' It recommends a change while the Risk Manager said '
+                f'"{escape(proposal.policy_decision)}". Approving it is an explicit override.</div>'
+                if proposal.requires_override else "")
+    why = escape(proposal.rationale) if proposal.rationale else "No rationale recorded."
+    return compact(
+        f'<div class="fa-root"><div class="fa-assist" style="padding:14px 16px">'
+        f'<div class="fa-assist-top">{head}<span class="fa-rule" style="color:#8fa3c2;font-size:12px">'
+        f'risk {proposal.risk:.1f} · policy says {escape(proposal.policy_decision)} · '
+        f'{escape(getattr(proposal, "agent", ""))}</span></div>'
+        f'<div style="font-size:14.5px;font-weight:650;margin-bottom:6px">{title}</div>'
+        f'<div style="font-size:13.4px;color:#dbe6f8;line-height:1.5">{why}</div>'
+        f'<div class="fa-note" style="margin-top:8px">{changes}</div>'
+        f'{override}</div></div>')

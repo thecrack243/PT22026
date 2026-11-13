@@ -9,7 +9,7 @@ from __future__ import annotations
 import streamlit as st
 
 import ui
-from common import cases_path, get_case_store
+from common import agent_for, cases_path, get_case_store, proposals, toolkit
 from src.cases import PRIORITIES, PRIORITY_LABELS, STATUSES, STATUS_LABELS, CaseStore, case_id
 from src.tools import Toolkit, ToolError
 
@@ -57,7 +57,55 @@ def render_filters() -> tuple[str, str, str, str]:
     return status, state, priority, search
 
 
-def open_case(number: int, store: CaseStore) -> None:
+def _assistant(case, tag: str) -> None:
+    """The investigation assistant: run it here, then send the result for approval.
+
+    Nothing this section does can change the case. "Run" only reads, and "Send
+    for approval" writes a proposal -- the case moves on the Approvals page,
+    when a person says so.
+    """
+    store = proposals()
+    pending = store.pending_for(case.number)
+    st.markdown('<div class="fa-sub2" style="margin-top:22px">Investigation assistant</div>',
+                unsafe_allow_html=True)
+    if pending is not None:
+        st.markdown(ui.proposal_card_html(pending, show_case=False), unsafe_allow_html=True)
+        st.caption("Waiting for a decision in Approvals. The case has not been changed.")
+        return
+
+    key = f"investigation_{case.number}"
+    if st.button("Run investigation", key=f"run_agent_{case.number}",
+                 icon=":material/travel_explore:", help="Reads the case, compares it with the "
+                 "live feed, asks the Risk Manager and recommends an action. It cannot edit the case."):
+        try:
+            st.session_state[key] = agent_for(toolkit(tag)).investigate(case.number)
+        except ToolError as exc:
+            st.error(str(exc))
+            return
+
+    result = st.session_state.get(key)
+    if result is None:
+        st.caption("The assistant gathers the evidence an analyst would want, then recommends an "
+                   "action. You approve it. Nothing is changed until you do.")
+        return
+
+    st.markdown(ui.investigation_html(result), unsafe_allow_html=True)
+    left, right = st.columns([1, 1])
+    if left.button("Send for approval", key=f"file_agent_{case.number}", type="primary"):
+        try:
+            filed = agent_for(toolkit(tag)).file(result)
+        except ToolError as exc:
+            st.error(str(exc))
+            return
+        st.session_state.pop(key, None)
+        st.toast(f"Proposal {filed.number} sent for approval")
+        st.rerun()
+    if right.button("Discard", key=f"discard_agent_{case.number}"):
+        st.session_state.pop(key, None)
+        st.rerun()
+
+
+def open_case(number: int, store: CaseStore, tag: str = "") -> None:
     """Pop-up with the case, its resolution, priority and notes."""
     case = store.get(number)
     title = f"Case {case_id(number)}" + (" · Closed" if case is not None and case.closed else "")
@@ -123,6 +171,7 @@ def open_case(number: int, store: CaseStore) -> None:
                 st.error(str(exc))
                 return
             st.session_state["case_to_open"] = updated.number   # the pop-up shows the saved state
+            st.session_state.pop(f"investigation_{case.number}", None)   # that reading is now stale
             st.toast(f"{updated.case_id} saved · {updated.state_label}")
             st.rerun()
 
@@ -139,10 +188,15 @@ def open_case(number: int, store: CaseStore) -> None:
                 st.markdown('<div class="fa-note">Nothing recorded yet.</div>',
                             unsafe_allow_html=True)
 
+        # Full width, under both columns: the assistant has too much to say to
+        # squeeze into the narrow right-hand side.
+        if tag:
+            _assistant(case, tag)
+
     _show()
 
 
-def render(header, store: CaseStore) -> None:
+def render(header, store: CaseStore, tag: str = "") -> None:
     """Draw the cases page. `store` is the shared SQLite store."""
     counts = store.counts()
     header.markdown(
@@ -178,6 +232,6 @@ def render(header, store: CaseStore) -> None:
     # editing the form inside it (a full rerun) would throw it away.
     open_id = st.session_state.get("case_to_open")
     if open_id is not None and hasattr(st, "dialog"):
-        open_case(int(open_id), store)
+        open_case(int(open_id), store, tag)
     elif open_id is not None:                       # older Streamlit: no pop-up support
         st.info(f"Case {case_id(int(open_id))} is saved. Open the pop-up in a Streamlit version that supports it.")
