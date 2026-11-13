@@ -158,6 +158,7 @@ def render(header, store: CaseStore) -> None:
         st.markdown('<div class="fa-note">No case matches these filters.</div>', unsafe_allow_html=True)
         return
 
+    st.markdown('<div style="height:24px"></div>', unsafe_allow_html=True)   # room between filters and list
     with st.container(border=True):
         for case in cases:
             # The card is the button: an invisible native button (keyed
