@@ -97,7 +97,14 @@ def _prediction(engine, row, policy):
 
 
 def _create_case(txn_id: int) -> None:
-    """Callback: copy this alert into a durable investigation case (stored on disk)."""
+    """Copy this alert into a durable case and jump straight to it.
+
+    Runs in the pop-up body after the button click (not in an on_click
+    callback: a callback triggered inside a dialog only reruns the fragment,
+    so the jump to the Cases page would never happen in a real browser).
+    The st.rerun() right after turns this into a full run, where the Cases
+    page opens the new pop-up and the sidebar highlight follows.
+    """
     store = get_case_store(str(cases_path()))
     case = store.open_for(txn_id)                    # clicked twice before the page redrew
     if case is None:
@@ -107,7 +114,10 @@ def _create_case(txn_id: int) -> None:
             return
         case = store.create(txn_id, float(row.risk), str(row.decision), str(row.reason),
                             source="live", amount=float(row.amount), tx_type=str(row.type))
-    st.session_state.alert_to_open = txn_id          # keep the pop-up up to show the confirmation
+    st.session_state.mode = "Cases"                  # the sidebar highlight follows on this run
+    st.session_state["case_to_open"] = case.number   # the case pop-up opens on the Cases page
+    st.session_state["alert_to_open"] = None         # do not re-open this alert pop-up later
+    st.rerun()
 
 
 def case_action(row) -> None:
@@ -115,18 +125,18 @@ def case_action(row) -> None:
 
     The alert itself is ephemeral: rows are trimmed and a restart forgets the
     feed. A case is the analyst's durable copy, so it is written to SQLite here.
-    After the click the pop-up redraws and shows the saved case instead.
     """
     existing = get_case_store(str(cases_path())).open_for(int(row.id))
 
     st.markdown('<div class="fa-note" style="margin:14px 0 6px">Investigation</div>', unsafe_allow_html=True)
     if existing is not None:
-        st.caption(f"Case {existing.case_id} opened · {existing.status_label} · {existing.priority_label} priority. "
-                   "Manage it from Cases in the sidebar.")
+        st.caption(f"Case {existing.case_id} already exists · {existing.state_label} · "
+                   f"{existing.priority_label} priority. Open it from Cases in the sidebar.")
         return
 
-    st.button("Open investigation case", key=f"open_case_{int(row.id)}", width="stretch",
-              icon=":material/add_task:", on_click=_create_case, args=(int(row.id),))
+    if st.button("Open investigation case", key=f"open_case_{int(row.id)}", width="stretch",
+                 icon=":material/add_task:"):
+        _create_case(int(row.id))
 
 
 def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:

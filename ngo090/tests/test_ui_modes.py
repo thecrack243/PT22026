@@ -146,5 +146,53 @@ def test_the_cases_page_clear_button_resets_the_filters(tmp_path, monkeypatch):
     assert any("C-0001" in b.label for b in at.button)       # the case is back
 
 
+def test_the_case_lifecycle_from_the_pop_up(tmp_path, monkeypatch):
+    """Open -> Save and close -> Reopen, driven through the real pop-up form.
+
+    Regression for the form gotcha: a selectbox inside an st.form only hands
+    its value over on submit, so the Status picker lives outside the form —
+    otherwise 'Save and close' could never become clickable in a browser.
+    """
+    from src.cases import CaseStore
+
+    db = tmp_path / "cases.db"
+    monkeypatch.setenv("FRAUD_CASES_DB", str(db))
+    store = CaseStore(db)
+    case = store.create(txn_id=77, risk=95.0, decision="block", amount=900.0,
+                        tx_type="TRANSFER", source="test", explanation="lifecycle test")
+
+    at = page(mode="Cases")
+    assert not at.exception
+    at.button(key=f"case_{case.number}").click().run()
+    assert not at.exception
+    assert len(at.get("dialog")) == 1
+
+    dlg = at.get("dialog")[0]
+    # Freshly opened: investigating, so closing is not possible yet.
+    assert dlg.selectbox(key=f"case_popup_status_{case.number}").value == "investigating"
+    assert dlg.button[1].disabled            # Save and close
+
+    # Picking a resolution arms the close button; the status picker must be
+    # outside the form for this to work (values land before the submit rerun).
+    dlg.selectbox(key=f"case_popup_status_{case.number}").select("confirmed_fraud").run()
+    dlg = at.get("dialog")[0]
+    assert not dlg.button[1].disabled
+
+    dlg.button[1].click().run()              # Save and close
+    assert not at.exception
+    saved = store.get(case.case_id)
+    assert saved.closed and saved.status == "confirmed_fraud"
+
+    # The reopened pop-up shows the closed state and offers Reopen case.
+    assert len(at.get("dialog")) == 1
+    dlg = at.get("dialog")[0]
+    reopen = [b for b in dlg.button if b.label == "Reopen case"]
+    assert reopen, "a closed case offers Reopen case"
+    reopen[0].click().run()
+    assert not at.exception
+    reopened = store.get(case.case_id)
+    assert not reopened.closed and reopened.status == "confirmed_fraud"
+
+
 def _engine():
     return load_engine(ROOT, TAG)

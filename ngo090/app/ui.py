@@ -791,8 +791,9 @@ def alerts_title_html(n_alerts: int) -> str:
 # --------------------------------------------------------------------------- #
 # Investigation cases
 # --------------------------------------------------------------------------- #
-_STATUS_LABEL = {"open": "Open", "investigating": "Investigating", "confirmed_fraud": "Confirmed fraud",
-                 "false_positive": "False positive", "closed": "Closed"}
+_STATUS_LABEL = {"investigating": "Investigating", "confirmed_fraud": "Confirmed fraud",
+                 "false_positive": "False positive"}
+_STATUS_STATE_LABEL = {"open": "Open", "closed": "Closed"}
 _PRIORITY_LABEL = {"low": "Low", "medium": "Medium", "high": "High", "urgent": "Urgent"}
 
 
@@ -807,21 +808,25 @@ def _stamp(value: str) -> str:
 
 def case_label(case) -> str:
     """One line per case in the list: enough to decide whether to open it."""
+    resolution = _STATUS_LABEL[case.status]
+    state = "Closed · " + resolution if case.closed else resolution
     return (f"{case.case_id}  ·  #{int(case.txn_id)}  ·  risk {case.risk:.1f}  ·  "
-            f"{case.decision_label}  ·  {_STATUS_LABEL[case.status]}  ·  {_PRIORITY_LABEL[case.priority]}")
+            f"{case.decision_label}  ·  {state}  ·  {_PRIORITY_LABEL[case.priority]}")
 
 
 def cases_overview_html(counts: dict) -> str:
-    """Status counters above the list."""
-    order = ("open", "investigating", "confirmed_fraud", "false_positive", "closed")
+    """Status counters above the list: open cases per resolution, plus closed."""
+    order = ("investigating", "confirmed_fraud", "false_positive")
     pills = "".join(
         f'<div class="fa-pill"><i class="fa-dot" style="background:{_STATUS_DOT[s]}"></i>'
         f'{_STATUS_LABEL[s]} <b>{counts.get(s, 0):,}</b></div>' for s in order)
+    pills += f'<div class="fa-pill"><i class="fa-dot" style="background:{_STATUS_DOT["closed"]}"></i>' \
+             f'Closed <b>{counts.get("closed", 0):,}</b></div>'
     pills += f'<div class="fa-pill">All cases <b>{counts.get("all", 0):,}</b></div>'
     return compact(f'<div class="fa-root"><div class="fa-pills2">{pills}</div></div>')
 
 
-_STATUS_DOT = {"open": "#60a5fa", "investigating": "#fbbf24", "confirmed_fraud": "#fb7185",
+_STATUS_DOT = {"investigating": "#fbbf24", "confirmed_fraud": "#fb7185",
                "false_positive": "#4ade80", "closed": "#94a3b8"}
 
 
@@ -837,7 +842,8 @@ def case_detail_html(case) -> str:
     notes = escape(case.notes).replace("\n", "<br>") if case.notes else "No notes yet."
     return compact(
         f'<div class="fa-root"><div class="fa-detail-head"><h3>{case.case_id} &middot; transaction #{int(case.txn_id)}</h3>'
-        f'<div class="fa-pills" style="gap:8px"><span class="fa-tag {case.status}">{_STATUS_LABEL[case.status]}</span>'
+        f'<div class="fa-pills" style="gap:8px"><span class="fa-tag {"closed" if case.closed else "open"}">{case.state_label}</span>'
+        f'<span class="fa-tag {case.status}">{_STATUS_LABEL[case.status]}</span>'
         f'<span class="fa-tag prio-{case.priority}">{_PRIORITY_LABEL[case.priority]} priority</span></div></div>'
         f'<div class="fa-klabel">Risk score</div>'
         f'<div class="fa-risk-big" style="font-size:38px">{case.risk:.1f}<small> / 100</small></div>'

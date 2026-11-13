@@ -68,8 +68,8 @@ def render_sidebar(store) -> str:
 
         st.markdown('<div class="fa-root"><div class="fa-side-label" style="margin-top:16px">Workspace</div></div>',
                     unsafe_allow_html=True)
-        total = store.counts()["all"]               # the badge matches the list on the page
-        label = f"Cases · {total}" if total else CASES
+        open_n = store.counts()["open"]             # not-closed cases: what can still be worked on
+        label = f"Cases · {open_n}" if open_n else CASES
         st.button(label, key=f"nav_{SLUG[CASES]}", icon=ICON[CASES], width="stretch",
                   type="primary" if st.session_state.mode == CASES else "secondary",
                   on_click=_switch_to, args=(CASES,),

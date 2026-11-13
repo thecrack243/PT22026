@@ -20,21 +20,20 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-STATUSES = ("open", "investigating", "confirmed_fraud", "false_positive", "closed")
+STATUSES = ("investigating", "confirmed_fraud", "false_positive")
 PRIORITIES = ("low", "medium", "high", "urgent")
 
 STATUS_LABELS = {
-    "open": "Open",
     "investigating": "Investigating",
     "confirmed_fraud": "Confirmed fraud",
     "false_positive": "False positive",
-    "closed": "Closed",
 }
 PRIORITY_LABELS = {"low": "Low", "medium": "Medium", "high": "High", "urgent": "Urgent"}
 DECISION_LABELS = {"approve": "Approved", "review": "Sent to review", "block": "Blocked"}
 
-ACTIVE = ("open", "investigating")          # a case still being worked on
-CLOSED = ("confirmed_fraud", "false_positive", "closed")
+# A case is open (being worked on) or closed (a decision was made and recorded).
+# The resolution (status above) and the state are independent: an open case can
+# already name its resolution, a closed one always carries one.
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -43,7 +42,8 @@ CREATE TABLE IF NOT EXISTS cases (
     risk        REAL    NOT NULL,
     decision    TEXT    NOT NULL,
     explanation TEXT    NOT NULL DEFAULT '',
-    status      TEXT    NOT NULL DEFAULT 'open',
+    status      TEXT    NOT NULL DEFAULT 'investigating',
+    closed      INTEGER NOT NULL DEFAULT 0,
     notes       TEXT    NOT NULL DEFAULT '',
     priority    TEXT    NOT NULL DEFAULT 'medium',
     source      TEXT    NOT NULL DEFAULT 'live',
@@ -55,8 +55,12 @@ CREATE TABLE IF NOT EXISTS cases (
 CREATE INDEX IF NOT EXISTS idx_cases_txn    ON cases(txn_id);
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
 """
-_COLUMNS = ("id", "txn_id", "risk", "decision", "explanation", "status", "notes",
+_COLUMNS = ("id", "txn_id", "risk", "decision", "explanation", "status", "closed", "notes",
             "priority", "source", "amount", "tx_type", "created_at", "updated_at")
+
+# Statuses written by the first version of the store (before the closed flag existed).
+_LEGACY_OPEN = "open"
+_LEGACY_CLOSED = "closed"
 
 
 def case_id(number: int) -> str:
@@ -108,7 +112,8 @@ class Case:
     risk: float
     decision: str
     explanation: str = ""
-    status: str = "open"
+    status: str = "investigating"      # the resolution: investigating / confirmed / false positive
+    closed: bool = False               # the state: still open, or done and archived
     notes: str = ""
     priority: str = "medium"
     source: str = "live"               # live / replay / testing
@@ -122,12 +127,16 @@ class Case:
         return case_id(self.number)
 
     @property
-    def is_active(self) -> bool:
-        return self.status in ACTIVE
+    def is_open(self) -> bool:
+        return not self.closed
 
     @property
     def status_label(self) -> str:
         return STATUS_LABELS[self.status]
+
+    @property
+    def state_label(self) -> str:
+        return "Closed" if self.closed else "Open"
 
     @property
     def priority_label(self) -> str:
@@ -168,16 +177,31 @@ class CaseStore:
         conn = self._connect()
         conn.row_factory = sqlite3.Row
         conn.executescript(_SCHEMA)
+        self._migrate(conn)
         conn.commit()
         if self._memory is None:
             conn.close()
 
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Bring a database written by an older version up to the current model.
+
+        The first version had a single status column with 'open' and 'closed'
+        values. The current model separates the resolution (status) from the
+        state (closed flag), so old rows are remapped on startup.
+        """
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(cases)")}
+        if "closed" not in cols:
+            conn.execute("ALTER TABLE cases ADD COLUMN closed INTEGER NOT NULL DEFAULT 0")
+        conn.execute(f"UPDATE cases SET status = 'investigating' WHERE status = ?", (_LEGACY_OPEN,))
+        conn.execute("UPDATE cases SET closed = 1, status = 'investigating' WHERE status = ?",
+                     (_LEGACY_CLOSED,))
+
     def _row_to_case(self, row: sqlite3.Row) -> Case:
         return Case(number=row["id"], txn_id=row["txn_id"], risk=row["risk"],
                     decision=row["decision"], explanation=row["explanation"],
-                    status=row["status"], notes=row["notes"], priority=row["priority"],
-                    source=row["source"], amount=row["amount"], tx_type=row["tx_type"],
-                    created_at=row["created_at"], updated_at=row["updated_at"])
+                    status=row["status"], closed=bool(row["closed"]), notes=row["notes"],
+                    priority=row["priority"], source=row["source"], amount=row["amount"],
+                    tx_type=row["tx_type"], created_at=row["created_at"], updated_at=row["updated_at"])
 
     def _select(self, where: str = "", params: tuple = (), order: str = "updated_at DESC",
                 limit: int | None = None) -> list[Case]:
@@ -204,26 +228,35 @@ class CaseStore:
         return found[0] if found else None
 
     def open_for(self, txn_id: int) -> Case | None:
-        """The case still being worked on for a transaction, if any.
+        """The not-closed case for a transaction, if any.
 
         Used before creating one, so clicking twice does not open two cases for
         the same alert. Closed cases do not block a new investigation.
         """
-        active = ",".join("?" * len(ACTIVE))
-        found = self._select(f"txn_id = ? AND status IN ({active})", (int(txn_id), *ACTIVE),
+        found = self._select("txn_id = ? AND closed = 0", (int(txn_id),),
                              order="updated_at DESC", limit=1)
         return found[0] if found else None
 
     def for_transaction(self, txn_id: int) -> list[Case]:
         return self._select("txn_id = ?", (int(txn_id),))
 
-    def list(self, status: str | None = None, priority: str | None = None,
-             search: str = "", limit: int = 500) -> list[Case]:
-        """Filtered list, most recently updated first. `search` matches case or transaction id."""
+    def list(self, status: str | None = None, state: str | None = None,
+             priority: str | None = None, search: str = "", limit: int = 500) -> list[Case]:
+        """Filtered list, most recently updated first.
+
+        `status` is the resolution, `state` is 'open' or 'closed'; they combine.
+        `search` matches case or transaction id.
+        """
         clauses, params = [], []
         if status:
             clauses.append("status = ?")
             params.append(_check_status(status))
+        if state:
+            state = str(state).strip().lower()
+            if state not in ("open", "closed"):
+                raise ValueError("State must be 'open' or 'closed'.")
+            clauses.append("closed = ?")
+            params.append(1 if state == "closed" else 0)
         if priority:
             clauses.append("priority = ?")
             params.append(_check_priority(priority))
@@ -251,17 +284,27 @@ class CaseStore:
         return self._select(where, tuple(params), order="updated_at DESC", limit=limit)
 
     def counts(self) -> dict[str, int]:
-        """Cases per status (every status present, zeros included) plus 'all' and 'active'."""
+        """Pill and badge numbers.
+
+        Per-resolution counts cover open cases only (what the analyst can still
+        work on); 'closed' counts every closed case; 'open' is the sidebar badge;
+        'all' is everything.
+        """
         out = {s: 0 for s in STATUSES}
+        closed = 0
         conn = self._connect()
         try:
-            for row in conn.execute("SELECT status, COUNT(*) AS n FROM cases GROUP BY status"):
-                out[row["status"]] = row["n"]
+            for row in conn.execute("SELECT status, closed, COUNT(*) AS n FROM cases GROUP BY status, closed"):
+                if row["closed"]:
+                    closed += row["n"]
+                elif row["status"] in out:
+                    out[row["status"]] = row["n"]
         finally:
             if self._memory is None:
                 conn.close()
-        out["all"] = sum(out[s] for s in STATUSES)
-        out["active"] = sum(out[s] for s in ACTIVE)
+        out["closed"] = closed
+        out["open"] = sum(out[s] for s in STATUSES)
+        out["all"] = out["open"] + closed
         return out
 
     # ------------------------------------------------------------------ #
@@ -269,8 +312,9 @@ class CaseStore:
     # ------------------------------------------------------------------ #
     def create(self, txn_id: int, risk: float, decision: str, explanation: str = "",
                *, priority: str | None = None, source: str = "live", amount: float = 0.0,
-               tx_type: str = "", status: str = "open", notes: str = "") -> Case:
-        """Insert a new case and return it (with its generated id and timestamps)."""
+               tx_type: str = "", status: str = "investigating", notes: str = "",
+               closed: bool = False) -> Case:
+        """Insert a new case (default: open and investigating) and return it."""
         risk = float(risk)
         priority = _check_priority(priority or priority_for(risk, decision))
         status = _check_status(status)
@@ -278,10 +322,11 @@ class CaseStore:
         conn = self._connect()
         try:
             cur = conn.execute(
-                "INSERT INTO cases (txn_id, risk, decision, explanation, status, notes, priority,"
-                " source, amount, tx_type, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (int(txn_id), risk, str(decision), str(explanation), status, str(notes), priority,
+                "INSERT INTO cases (txn_id, risk, decision, explanation, status, closed, notes,"
+                " priority, source, amount, tx_type, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (int(txn_id), risk, str(decision), str(explanation), status,
+                 1 if closed else 0, str(notes), priority,
                  str(source), float(amount), str(tx_type), stamp, stamp),
             )
             conn.commit()
@@ -290,35 +335,39 @@ class CaseStore:
             if self._memory is None:
                 conn.close()
         return Case(number=number, txn_id=int(txn_id), risk=risk, decision=str(decision),
-                    explanation=str(explanation), status=status, notes=str(notes),
-                    priority=priority, source=str(source), amount=float(amount),
-                    tx_type=str(tx_type), created_at=stamp, updated_at=stamp)
+                    explanation=str(explanation), status=status, closed=bool(closed),
+                    notes=str(notes), priority=priority, source=str(source),
+                    amount=float(amount), tx_type=str(tx_type), created_at=stamp, updated_at=stamp)
 
     def update(self, value: str | int, *, status: str | None = None, notes: str | None = None,
-               priority: str | None = None) -> Case:
-        """Change status, notes and/or priority. Only real changes touch updated_at."""
+               priority: str | None = None, closed: bool | None = None) -> Case:
+        """Change status, notes, priority and/or the closed state. Only real changes touch updated_at."""
         case = self.get(value)
         if case is None:
             raise KeyError(f"Case {value!r} does not exist.")
         new_status = _check_status(status) if status is not None else case.status
         new_priority = _check_priority(priority) if priority is not None else case.priority
         new_notes = case.notes if notes is None else str(notes)
+        new_closed = case.closed if closed is None else bool(closed)
 
-        changed = (new_status, new_priority, new_notes) != (case.status, case.priority, case.notes)
+        changed = (new_status, new_priority, new_notes, new_closed) != \
+                  (case.status, case.priority, case.notes, case.closed)
         updated = _now() if changed else case.updated_at
         conn = self._connect()
         try:
-            conn.execute("UPDATE cases SET status = ?, notes = ?, priority = ?, updated_at = ? WHERE id = ?",
-                         (new_status, new_notes, new_priority, updated, case.number))
+            conn.execute("UPDATE cases SET status = ?, notes = ?, priority = ?, closed = ?,"
+                         " updated_at = ? WHERE id = ?",
+                         (new_status, new_notes, new_priority, 1 if new_closed else 0,
+                          updated, case.number))
             conn.commit()
         finally:
             if self._memory is None:
                 conn.close()
         return replace(case, status=new_status, notes=new_notes, priority=new_priority,
-                       updated_at=updated)
+                       closed=new_closed, updated_at=updated)
 
     def set_status(self, value: str | int, status: str) -> Case:
-        """Shortcut for the buttons that move a case through its life cycle."""
+        """Shortcut for moving a case's resolution."""
         return self.update(value, status=status)
 
     def delete(self, value: str | int) -> bool:

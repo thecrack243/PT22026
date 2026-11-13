@@ -5,8 +5,7 @@ import time
 
 import pytest
 
-from src.cases import (ACTIVE, PRIORITIES, STATUSES, CaseStore, case_id, parse_case_id,
-                       priority_for)
+from src.cases import PRIORITIES, STATUSES, CaseStore, case_id, parse_case_id, priority_for
 
 FRAUD_EXPLANATION = "The sender was emptied into an account that held no money"
 
@@ -53,12 +52,13 @@ def test_a_case_keeps_every_field_it_was_created_with(store):
     assert case.case_id == "C-0001"
     assert (case.txn_id, case.risk, case.decision) == (42, 93.25, "review")
     assert case.explanation == FRAUD_EXPLANATION
-    assert case.status == "open"
+    assert case.status == "investigating"                  # the default resolution
+    assert case.closed is False                            # and it starts open
     assert case.priority == "high"
     assert (case.amount, case.tx_type, case.source) == (250_000.0, "TRANSFER", "live")
     assert case.notes == ""
     assert case.created_at == case.updated_at
-    assert case.is_active and case.status_label == "Open"
+    assert case.is_open and case.status_label == "Investigating" and case.state_label == "Open"
 
 
 def test_a_case_survives_reopening_the_database(tmp_path):
@@ -80,11 +80,11 @@ def test_the_database_and_its_folder_are_created_on_demand(tmp_path):
     assert path.exists()
 
 
-def test_cases_start_open_and_can_be_created_with_another_status(store):
-    assert make(store).status == "open"
+def test_cases_start_investigating_and_can_be_created_with_a_resolution(store):
+    assert make(store).status == "investigating"
     confirmed = make(store, txn_id=102, status="confirmed_fraud")
     assert confirmed.status == "confirmed_fraud"
-    assert not confirmed.is_active
+    assert confirmed.is_open                             # decided, but not closed yet
 
 
 def test_unknown_status_or_priority_is_rejected(store):
@@ -92,6 +92,39 @@ def test_unknown_status_or_priority_is_rejected(store):
         make(store, status="pending")
     with pytest.raises(ValueError, match="Unknown priority"):
         make(store, priority="critical")
+
+
+def test_a_legacy_database_is_migrated_on_startup(tmp_path):
+    """A database from the first version (status open/closed, no closed column)."""
+    import sqlite3
+
+    path = tmp_path / "cases.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, txn_id INTEGER NOT NULL, risk REAL NOT NULL,
+            decision TEXT NOT NULL, explanation TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open', notes TEXT NOT NULL DEFAULT '',
+            priority TEXT NOT NULL DEFAULT 'medium', source TEXT NOT NULL DEFAULT 'live',
+            amount REAL NOT NULL DEFAULT 0, tx_type TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    """)
+    conn.execute("INSERT INTO cases (txn_id, risk, decision, status, created_at, updated_at)"
+                 " VALUES (1, 95.0, 'block', 'open', 't', 't')")           # old 'open'
+    conn.execute("INSERT INTO cases (txn_id, risk, decision, status, created_at, updated_at)"
+                 " VALUES (2, 90.0, 'review', 'investigating', 't', 't')") # same name, same meaning
+    conn.execute("INSERT INTO cases (txn_id, risk, decision, status, created_at, updated_at)"
+                 " VALUES (3, 88.0, 'approve', 'closed', 't', 't')")       # old 'closed'
+    conn.commit()
+    conn.close()
+
+    store = CaseStore(path)                     # opening the store performs the migration
+    rows = {c.txn_id: c for c in store.list()}
+    assert rows[1].status == "investigating" and rows[1].closed is False
+    assert rows[2].status == "investigating" and rows[2].closed is False
+    assert rows[3].closed is True                          # the old Closed state became the flag
+    assert store.counts()["open"] == 2 and store.counts()["closed"] == 1
+    store.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -105,11 +138,11 @@ def test_lookup_by_case_id_and_transaction_id(store):
     assert [c.number for c in store.for_transaction(555)] == [case.number]
 
 
-def test_open_for_finds_only_the_case_still_being_worked_on(store):
+def test_open_for_finds_only_a_case_still_open(store):
     case = make(store, txn_id=9)
     assert store.open_for(9) == case
 
-    store.set_status(case.case_id, "closed")
+    store.update(case.case_id, closed=True)
     assert store.open_for(9) is None                    # a closed case does not block a new one
 
     second = make(store, txn_id=9)
@@ -119,15 +152,27 @@ def test_open_for_finds_only_the_case_still_being_worked_on(store):
 
 def test_listing_filters_and_orders_by_last_update(store):
     a = make(store, txn_id=1, priority="urgent")
-    b = make(store, txn_id=2, priority="low")
-    store.update(a.case_id, status="investigating")     # a becomes the most recently updated
+    b = make(store, txn_id=2, priority="low", status="confirmed_fraud")
+    store.update(a.case_id, notes="a note")             # a becomes the most recently updated
 
     assert [c.number for c in store.list()][0] == a.number
-    assert [c.number for c in store.list(status="open")] == [b.number]
+    assert [c.number for c in store.list(status="confirmed_fraud")] == [b.number]
     assert [c.number for c in store.list(status="investigating")] == [a.number]
     assert [c.number for c in store.list(priority="urgent")] == [a.number]
+    assert [c.number for c in store.list(state="open")] == [a.number, b.number]
+    assert [c.number for c in store.list(state="closed")] == []
     assert [c.number for c in store.list() if c.number == b.number]
     assert store.list(limit=1)[0].number == a.number
+
+
+def test_status_and_state_filters_combine(store):
+    decided = make(store, txn_id=1, status="confirmed_fraud")
+    store.update(decided.case_id, closed=True)
+    working = make(store, txn_id=2, status="confirmed_fraud")
+
+    found = store.list(status="confirmed_fraud", state="closed")
+    assert [c.number for c in found] == [decided.number]
+    assert [c.number for c in store.list(status="confirmed_fraud", state="open")] == [working.number]
 
 
 def test_search_matches_both_ids(store):
@@ -139,14 +184,18 @@ def test_search_matches_both_ids(store):
     assert store.list(search="0000421") == []
 
 
-def test_counts_cover_every_status(store):
-    make(store, txn_id=1)
-    make(store, txn_id=2, status="investigating")
-    make(store, txn_id=3, status="confirmed_fraud")
+def test_counts_separate_the_resolution_from_the_state(store):
+    make(store, txn_id=1)                                            # investigating, open
+    make(store, txn_id=2, status="confirmed_fraud")                  # decided, open
+    closed = make(store, txn_id=3, status="false_positive")
+    store.update(closed.case_id, closed=True)
+
     counts = store.counts()
-    assert set(counts) == set(STATUSES) | {"all", "active"}
-    assert counts["open"] == 1 and counts["investigating"] == 1
-    assert counts["all"] == 3 and counts["active"] == 2
+    assert set(counts) == set(STATUSES) | {"closed", "open", "all"}
+    assert counts["investigating"] == 1 and counts["confirmed_fraud"] == 1
+    assert counts["false_positive"] == 0                  # the open ones only
+    assert counts["closed"] == 1
+    assert counts["open"] == 2 and counts["all"] == 3
 
 
 # --------------------------------------------------------------------------- #
@@ -155,24 +204,34 @@ def test_counts_cover_every_status(store):
 def test_updating_bumps_updated_at_but_not_created_at(store):
     case = make(store)
     time.sleep(0.01)
-    moved = store.update(case.case_id, status="investigating", notes="Asked the sender for documents.")
+    moved = store.update(case.case_id, status="confirmed_fraud", notes="Asked the sender for documents.")
 
-    assert moved.status == "investigating"
+    assert moved.status == "confirmed_fraud"
     assert moved.notes.startswith("Asked the sender")
     assert moved.created_at == case.created_at
     assert moved.updated_at > case.updated_at
     assert store.get(case.case_id) == moved
 
 
+def test_saving_and_closing_in_one_update(store):
+    case = make(store)
+    closed = store.update(case.case_id, status="confirmed_fraud", notes="Mule flow", closed=True)
+    assert closed.closed and closed.is_open is False and closed.state_label == "Closed"
+
+    reopened = store.update(case.case_id, closed=False)   # the Reopen case button
+    assert reopened.closed is False and reopened.status == "confirmed_fraud"
+
+
 def test_updating_with_the_same_values_does_not_touch_the_timestamp(store):
     case = make(store, notes="nothing new")
-    again = store.update(case.case_id, status=case.status, notes=case.notes, priority=case.priority)
+    again = store.update(case.case_id, status=case.status, notes=case.notes,
+                         priority=case.priority, closed=case.closed)
     assert again.updated_at == case.updated_at
 
 
 def test_updating_a_missing_case_fails(store):
     with pytest.raises(KeyError):
-        store.update("C-0404", status="closed")
+        store.update("C-0404", status="confirmed_fraud")
 
 
 def test_case_can_be_moved_through_every_status(store):
@@ -180,7 +239,6 @@ def test_case_can_be_moved_through_every_status(store):
     for status in STATUSES:
         case = store.set_status(case.case_id, status)
         assert case.status == status
-        assert (case.status in ACTIVE) == case.is_active
 
 
 def test_delete_removes_the_case(store):
