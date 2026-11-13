@@ -61,22 +61,21 @@ def _sync_switch(gen: int) -> None:
         st.session_state["auto_case_made"] = 0
 
 
-def render_alert_popover() -> tuple[bool, float, int]:
-    """Automatic case creation: on/off, the risk cut-off, and the batch size."""
+def render_alert_popover() -> tuple[float, int]:
+    """Risk cut-off and batch size for automatic case creation.
+
+    The switch itself lives in the alerts panel where the eye already is; this
+    popover holds the numbers behind it.
+    """
     on = bool(st.session_state.get("auto_case_on", False))
     made = int(st.session_state.get("auto_case_made", 0))
-    limit = int(st.session_state.get("auto_case_limit", 50) or 0)
-    # The generation in the key matters: when the batch fills, the switch is
-    # turned off by the app itself. Writing to a widget's key does not stop the
-    # browser from replaying its stale "on" for the old key, which silently
-    # re-armed the batch. A fresh key per stop leaves the old value homeless.
+    # The generation in the switch's key matters: when the batch fills, the
+    # switch is turned off by the app itself. Writing to a widget's key does
+    # not stop the browser from replaying its stale "on" for the old key,
+    # which silently re-armed the batch. A fresh key per stop leaves the old
+    # value homeless.
     gen = int(st.session_state.get("auto_case_gen", 0))
     with popover()("Alert"):
-        st.toggle("Create cases automatically", key=f"auto_case_switch_{gen}",
-                  on_change=_sync_switch, args=(gen,),
-                  help="Every alert at or above the risk score below is copied into an investigation "
-                       "case the moment it arrives, so a high-risk alert cannot slip through the feed "
-                       "unnoticed. The analyst still decides how each case ends.")
         min_risk = st.slider("Only above risk score", 90.0, 100.0, 99.0, 0.1, key="auto_case_min_risk",
                              help="Applies to new alerts only; cases already stored are never changed.")
         limit = st.number_input("Stop after this many cases", 0, 1000, 50, 10, key="auto_case_limit",
@@ -90,7 +89,7 @@ def render_alert_popover() -> tuple[bool, float, int]:
             st.caption(f"On · {made} automatic cases so far, no limit.")
         else:
             st.caption("Off — alerts are only kept when you open a case yourself.")
-    return on, float(min_risk), int(limit)
+    return float(min_risk), int(limit)
 
 
 def _stop_autocase() -> None:
@@ -101,14 +100,15 @@ def _stop_autocase() -> None:
     "switch on" — silently re-arming the batch. Instead the switch is off for
     the app from this tick on, the retired key keeps the browser's stale value
     harmless, the toast tells the analyst what happened, and the live status
-    line in the alerts panel turns to "paused" within a second. The switch
-    itself redraws in its new generation at the next interaction.
+    line in the alerts panel turns to "paused" within a second. Because the
+    switch lives inside the ticking fragment, it redraws in its new generation
+    (visually off) on the very next tick.
     """
     st.session_state["auto_case_on"] = False
     st.session_state["auto_case_gen"] = int(st.session_state.get("auto_case_gen", 0)) + 1
     if hasattr(st, "toast"):
-        st.toast("Automatic case creation is paused: the batch is full. Open the Alert settings "
-                 "to start a new one.")
+        st.toast("Automatic case creation is paused: the batch is full. "
+                 "Flip the Auto-case switch for a new batch.")
 
 
 def _select_alert(txn_id: int) -> None:
@@ -240,11 +240,27 @@ def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
     _show()
 
 
+def _autocase_switch() -> None:
+    """The auto-case switch, drawn in the alerts card where the eye already is.
+
+    Being inside the ticking fragment is what makes it self-correcting: when
+    the batch fills and the app turns the switch off, the next tick redraws it
+    in its new generation — visually off, within a second, no interaction
+    needed. A stale browser replay for a retired generation is dropped by
+    _sync_switch's generation check.
+    """
+    gen = int(st.session_state.get("auto_case_gen", 0))
+    st.toggle("Auto-case", key=f"auto_case_switch_{gen}", on_change=_sync_switch, args=(gen,),
+              help="Automatically opens an investigation case for every new alert above the risk "
+                   "cut-off (Alert settings), so a high-risk alert cannot slip through the feed "
+                   "unnoticed. The analyst still decides how each case ends.")
+
+
 def _autocase_status() -> None:
     """Live one-liner about automatic case creation, fresh every tick.
 
-    This is what the analyst actually watches: the switch in the Alert settings
-    only redraws on a full run, while this line is part of the ticking panel.
+    This is what the analyst actually watches: this line is part of the
+    ticking panel, right under the auto-case switch.
     """
     limit = int(st.session_state.get("auto_case_limit", 50) or 0)
     made = int(st.session_state.get("auto_case_made", 0))
@@ -308,6 +324,7 @@ def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show
         with st.container(border=True):
             m = view["metrics"]
             st.markdown(ui.alerts_title_html(m["reviewed"] + m["blocked"]), unsafe_allow_html=True)
+            _autocase_switch()
             _autocase_status()
             alerts = stream.alerts(10)
             if alerts.empty:
