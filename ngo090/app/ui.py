@@ -119,7 +119,7 @@ background:rgba(18,30,56,.85) !important;color:#e6edf7 !important;font-weight:60
 .fa-sub2{font-size:13px;color:#9db0cf;margin:14px 0 8px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;}
 .fa-modehead h2{margin:0 0 4px;font-size:22px;}
 .fa-modehead p{margin:0 0 14px;color:#9db0cf;font-size:14px;}
-.fa-pills2{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 16px;}
+.fa-pills2{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 26px;}
 .fa-pills2 .fa-pill{font-size:13px;padding:8px 14px;}
 .fa-pill b{color:#fff;font-weight:650;}
 .fa-tag.fraud{background:rgba(244,63,94,.18);color:#fda4af;border:1px solid rgba(244,63,94,.4);}

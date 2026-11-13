@@ -34,7 +34,7 @@ def _clear_filters() -> None:
 
 
 def render_filters() -> tuple[str, str, str, str]:
-    cols = st.columns([1.05, 0.75, 0.95, 2.0, 0.75], vertical_alignment="bottom")
+    cols = st.columns([1.05, 0.75, 0.95, 2.0, 0.75], gap="medium", vertical_alignment="bottom")
     with cols[0]:
         status = st.selectbox("Status", (ALL, *STATUSES),
                               format_func=lambda s: s if s == ALL else STATUS_LABELS[s],
@@ -158,7 +158,7 @@ def render(header, store: CaseStore) -> None:
         st.markdown('<div class="fa-note">No case matches these filters.</div>', unsafe_allow_html=True)
         return
 
-    st.markdown(f'<div class="fa-note" style="margin:2px 2px 8px">{len(cases):,} case(s), '
+    st.markdown(f'<div class="fa-note" style="margin:14px 2px 12px">{len(cases):,} case(s), '
                 f'most recently updated first</div>', unsafe_allow_html=True)
     with st.container(border=True):
         for case in cases:
