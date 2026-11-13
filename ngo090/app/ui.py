@@ -184,6 +184,8 @@ card) carries the click, the card is all the analyst sees. The key
 prefix case_row_ (never case_) keeps this away from the filter
 widgets, which are keyed case_status, case_state, ... */
 div[data-testid="stVerticalBlock"]:has(.fa-case-card){gap:0 !important;}
+/* clear air between the filter row and the bordered case list */
+div[class*="st-key-case_list"]{margin-top:22px !important;}
 div[class*="st-key-case_row_"]{width:100% !important;height:100px !important;}
 div[class*="st-key-case_row_"] .stButton{width:100% !important;height:100px !important;}
 div[class*="st-key-case_row_"] button{opacity:0 !important;width:100% !important;height:100px !important;
