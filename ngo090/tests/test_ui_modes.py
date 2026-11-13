@@ -136,7 +136,7 @@ def test_the_cases_page_clear_button_resets_the_filters(tmp_path, monkeypatch):
     def listed(at):
         """The case id shows in a card markdown, and its Open button exists."""
         shown = any("C-0001" in m.value for m in at.markdown)
-        return shown and at.button(key="case_1") is not None
+        return shown and at.button(key="case_row_1") is not None
 
     assert listed(at)
 
@@ -169,7 +169,7 @@ def test_the_case_lifecycle_from_the_pop_up(tmp_path, monkeypatch):
 
     at = page(mode="Cases")
     assert not at.exception
-    at.button(key=f"case_{case.number}").click().run()
+    at.button(key=f"case_row_{case.number}").click().run()
     assert not at.exception
     assert len(at.get("dialog")) == 1
 

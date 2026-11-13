@@ -176,10 +176,25 @@ section[data-testid="stSidebar"] .stButton>button>div{justify-content:flex-start
 .fa-tag.prio-low{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.26);}
 .fa-case-text{font-size:14px;color:#dbe6f8;line-height:1.55;background:rgba(255,255,255,.03);
 border:1px solid rgba(96,140,220,.16);border-radius:12px;padding:12px 14px;}
-[class*="st-key-case_"] button{width:100% !important;justify-content:flex-start !important;text-align:left !important;
-min-height:46px;padding:4px 14px !important;font-weight:500 !important;font-size:13.5px !important;}
-[class*="st-key-case_"] button>div{justify-content:flex-start !important;width:100%;}
-[class*="st-key-case_"] button p{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px !important;}
+/* Case list: the card IS the button. Each row is a pair -- an invisible
+st.button (keyed case_row_N) followed by the visible HTML card, which a
+negative margin slides up to exactly cover the button. Both are 88px
+tall, so the overlay is pixel-exact: the button (z-index above the
+card) carries the click, the card is all the analyst sees. The key
+prefix case_row_ (never case_) keeps this away from the filter
+widgets, which are keyed case_status, case_state, ... */
+div[data-testid="stVerticalBlock"]:has(.fa-case-card){gap:0 !important;}
+div[class*="st-key-case_row_"]{width:100% !important;height:88px !important;}
+div[class*="st-key-case_row_"] .stButton{width:100% !important;height:88px !important;}
+div[class*="st-key-case_row_"] button{opacity:0 !important;width:100% !important;height:88px !important;
+padding:0 !important;margin:0 !important;border:none !important;box-shadow:none !important;
+position:relative;z-index:10;cursor:pointer;}
+div[data-testid="stElementContainer"]:has(.fa-case-card){
+margin-top:-88px !important;margin-bottom:10px !important;height:88px !important;}
+.fa-case-card{height:88px;cursor:pointer;display:flex;flex-direction:column;justify-content:space-between;}
+/* hover feedback: highlight the card that sits over the hovered button */
+div[class*="st-key-case_row_"] button:hover + div[data-testid="stElementContainer"] .fa-case-card{
+border-color:rgba(96,165,250,.55) !important;box-shadow:0 0 18px rgba(59,130,246,.25);}
 </style>
 """
 
@@ -810,25 +825,26 @@ def case_card_html(case) -> str:
     """A two-line case card for the list.
 
     Top line: case id and transaction on the left, type and risk on the right.
-    Bottom line: state and resolution on the left, priority on the right.
+    Bottom line: priority and resolution on the left, state on the right.
+    The card is not itself a Streamlit widget -- the list pairs it with an
+    invisible, keyboard-reachable button that overlays it (see the CSS keyed
+    on st-key-case_), so clicking anywhere on the card opens the pop-up.
     """
-    amount = f"{case.amount:,.2f}" if case.amount else "-"
     tx_type = (case.tx_type or "-").replace("_", " ").title()
     return compact(
-        f'<div class="fa-root"><div class="fa-card" style="padding:14px 18px;margin:6px 0">'
-        # first line: who, what, how much | type and score
+        f'<div class="fa-root"><div class="fa-card fa-case-card">'
+        # first line: who and where it stands | what kind of transaction it is
         f'<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">'
         f'<div style="font-size:15px"><b>{case.case_id}</b>'
         f'<span style="color:#8fa3c2"> &middot; #{int(case.txn_id)}</span>'
-        f'<span class="fa-tag {case.decision}" style="margin-left:10px">{escape(case.decision_label)}</span>'
-        f'<b style="margin-left:10px">{amount}</b></div>'
+        f'<span class="fa-tag {case.decision}" style="margin-left:10px">{escape(case.decision_label)}</span></div>'
         f'<div style="color:#8fa3c2;font-size:13px">{escape(tx_type)} &middot; risk {case.risk:.1f}</div></div>'
-        # second line: where the investigation stands | how urgent it is
-        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">'
+        # second line: how urgent and which resolution | open or closed
+        f'<div style="display:flex;justify-content:space-between;align-items:center">'
         f'<div style="display:flex;gap:8px">'
-        f'<span class="fa-tag {"closed" if case.closed else "open"}">{case.state_label}</span>'
+        f'<span class="fa-tag prio-{case.priority}">{_PRIORITY_LABEL[case.priority]} priority</span>'
         f'<span class="fa-tag {case.status}">{_STATUS_LABEL[case.status]}</span></div>'
-        f'<span class="fa-tag prio-{case.priority}">{_PRIORITY_LABEL[case.priority]} priority</span></div>'
+        f'<span class="fa-tag {"closed" if case.closed else "open"}">{case.state_label}</span></div>'
         f'</div></div>')
 
 
