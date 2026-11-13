@@ -252,6 +252,22 @@ print(tools.assess_risk({"type": "TRANSFER", "amount": 250000,
                          "oldbalanceOrg": 250000, "oldbalanceDest": 0}).to_dict())
 ```
 
+### 7.8 Why account-level investigation is not built (yet)
+
+A natural next set of tools would be account-shaped: search by sender, search by receiver, per-account velocity, repeat-offender accounts, and "compare with this account's history". They are deliberately not built, because this dataset cannot support them:
+
+| Evidence from the full log | Consequence |
+| --- | --- |
+| 6,353,307 senders for 6,362,620 rows; 99.9% appear exactly once, max 3 | no sender history, so no per-sender baseline or velocity |
+| 8,213 fraud rows → 8,213 distinct senders and 8,169 distinct receivers | there is no such thing as a "repeated suspicious account" here |
+| Only 1,769 IDs ever appear as both sender and receiver | the sender and receiver sides do not form one account graph |
+| Sender balances reconcile in only 18% of consecutive pairs; receiver balances in 90% | the receiver side is a ledger, the sender side is not |
+| The live generator emits no account columns at all | in the live simulation there is no account key to search on |
+
+What the data does support is already in the tool layer: `find_related_transactions` retrieves related alerts on evidence that exists (type, amount band, emptied sender, the same simulated hour, the receiver's empty-account pattern), and the live dashboard reports population velocity — throughput, alerts per minute, and the review budget as it burns down.
+
+The account-shaped tools belong to the bank-card fraud version of this system, where a card and a merchant are real, persistent entities with history. There, the same `Toolkit` gains `search_transactions(account=...)`, `account_velocity(...)` and `compare_to_history(...)` without touching the decision, case or audit layers — those are already transaction-shaped and would stay as they are.
+
 ## 8. Tests
 
 ```bash
