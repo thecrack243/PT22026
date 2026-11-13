@@ -184,8 +184,15 @@ card) carries the click, the card is all the analyst sees. The key
 prefix case_row_ (never case_) keeps this away from the filter
 widgets, which are keyed case_status, case_state, ... */
 div[data-testid="stVerticalBlock"]:has(.fa-case-card){gap:0 !important;}
-/* clear air between the filter row and the bordered case list */
-div[class*="st-key-case_list"]{margin-top:22px !important;}
+/* The case list is its own scroll window: however many cases there are, the
+   page itself never has to scroll -- only the list does. Tighter padding so
+   the cards get the room instead of the frame. */
+div[class*="st-key-case_list"]{margin-top:22px !important;padding:8px 10px !important;
+max-height:calc(100vh - 300px);min-height:180px;overflow-y:auto;overscroll-behavior:contain;}
+div[class*="st-key-case_list"]::-webkit-scrollbar{width:10px;}
+div[class*="st-key-case_list"]::-webkit-scrollbar-thumb{background:rgba(120,160,220,.35);border-radius:8px;}
+div[class*="st-key-case_list"]::-webkit-scrollbar-thumb:hover{background:rgba(120,160,220,.55);}
+div[class*="st-key-case_list"]::-webkit-scrollbar-track{background:transparent;}
 div[class*="st-key-case_row_"]{width:100% !important;height:100px !important;}
 div[class*="st-key-case_row_"] .stButton{width:100% !important;height:100px !important;}
 div[class*="st-key-case_row_"] button{opacity:0 !important;width:100% !important;height:100px !important;
