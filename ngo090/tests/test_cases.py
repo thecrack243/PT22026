@@ -253,3 +253,62 @@ def test_in_memory_store_is_supported():
     case = make(store)
     assert store.get(case.case_id) == case
     store.close()
+
+
+# --------------------------------------------------------------------------- #
+# Automatic case creation
+# --------------------------------------------------------------------------- #
+from collections import namedtuple
+
+Alert = namedtuple("Alert", "id risk decision reason amount type")
+
+
+def alerts(*specs):
+    """(txn, risk, decision) tuples turned into the row shape auto_open expects."""
+    return [Alert(txn, risk, decision, "explanation", 500.0, "TRANSFER")
+            for txn, risk, decision in specs]
+
+
+def test_auto_open_creates_cases_for_alerts_at_or_above_the_threshold(store):
+    from src.cases import auto_open
+
+    made = auto_open(store, alerts((1, 99.0, "block"), (2, 99.5, "review"),
+                                   (3, 98.9, "block")), min_risk=99.0)
+    assert made == 2
+    assert {c.txn_id for c in store.list()} == {1, 2}
+    created = store.list()[0]
+    assert created.source == "auto" and created.status == "investigating"
+
+
+def test_auto_open_ignores_approved_transactions(store):
+    from src.cases import auto_open
+
+    made = auto_open(store, alerts((1, 99.9, "approve"), (2, 99.9, "block")), min_risk=99.0)
+    assert made == 1
+    assert [c.txn_id for c in store.list()] == [2]
+
+
+def test_auto_open_never_duplicates_an_existing_case(store):
+    from src.cases import auto_open
+
+    existing = store.create(11, 99.5, "block", FRAUD_EXPLANATION, source="live")
+    store.update(existing.case_id, closed=True, status="false_positive")   # closed cases count too
+    made = auto_open(store, alerts((11, 99.9, "block"), (12, 99.9, "block")), min_risk=99.0)
+    assert made == 1
+    assert len(store.for_transaction(11)) == 1
+    assert len(store.for_transaction(12)) == 1
+
+
+def test_auto_open_stops_at_the_batch_size(store):
+    from src.cases import auto_open
+
+    rows = alerts(*[(i, 99.5, "block") for i in range(1, 11)])
+    assert auto_open(store, rows, min_risk=99.0, limit=3) == 3
+    assert store.counts()["all"] == 3
+
+
+def test_auto_open_with_limit_zero_has_no_cap(store):
+    from src.cases import auto_open
+
+    rows = alerts(*[(i, 99.5, "block") for i in range(1, 26)])
+    assert auto_open(store, rows, min_risk=99.0, limit=0) == 25

@@ -386,3 +386,37 @@ class CaseStore:
         if self._memory is not None:
             self._memory.close()
             self._memory = None
+
+
+def auto_open(store: "CaseStore", rows, min_risk: float, limit: int = 0,
+              source: str = "auto") -> int:
+    """Open a case for every alert at or above `min_risk`; return how many were made.
+
+    This is the automatic version of the analyst clicking "Open investigation
+    case": high-risk alerts are too easy to lose when the feed keeps moving, so
+    the ones that reach the threshold are copied into SQLite immediately.
+
+    `rows` is any iterable of objects with `id`, `risk`, `decision`, `reason`,
+    `amount` and `type` (a DataFrame's `itertuples()` fits). Approved
+    transactions are skipped, and so is any transaction that already has a case
+    -- closed ones included, so reopening a decision never duplicates history.
+    `limit` caps the batch: 0 means no cap.
+    """
+    made = 0
+    for row in rows:
+        if limit and made >= limit:
+            break
+        if str(getattr(row, "decision", "")) == "approve":
+            continue
+        risk = float(getattr(row, "risk", 0.0))
+        if risk < float(min_risk):
+            continue
+        txn_id = int(getattr(row, "id"))
+        if store.for_transaction(txn_id):            # a case already exists, open or closed
+            continue
+        store.create(txn_id, risk, str(getattr(row, "decision", "review")),
+                     str(getattr(row, "reason", "")), source=source,
+                     amount=float(getattr(row, "amount", 0.0) or 0.0),
+                     tx_type=str(getattr(row, "type", "")))
+        made += 1
+    return made

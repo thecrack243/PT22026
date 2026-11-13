@@ -13,22 +13,102 @@ import streamlit as st
 import ui
 from common import (cases_path, get_case_store, get_engine, popover, render_costs_popover,
                     render_policy_popover)
-from src.decision import Policy
+from src.cases import auto_open
+from src.decision import APPROVE, Policy
 from src.live import LiveSettings, LiveStream, clock_label
 from src.predict import predict_one
 
 TICK_SECONDS = 1.0
 AWAY_MINUTES = 20           # a catch-up longer than this is reported as "while you were away"
-PREF_KEYS = ("sim_volume", "sim_fraud", "sim_speed", "sim_new_pattern", "sim_shift", "sim_show_truth")
+PREF_KEYS = ("sim_volume", "sim_fraud", "sim_speed", "sim_new_pattern", "sim_shift", "sim_show_truth",
+             "auto_case_on", "auto_case_min_risk", "auto_case_limit")
+AUTO_DEFAULTS = {"auto_case_on": False, "auto_case_min_risk": 99.0, "auto_case_limit": 50}
 
 
 def _restore_prefs() -> None:
+    # Saved settings first, then the defaults — both with setdefault. Anything
+    # already in the session (above all: a value the analyst just changed in a
+    # widget) wins; what was saved is only needed when a widget unmounted (a
+    # trip to another page drops its session value), and the defaults fill the
+    # gaps of a brand-new session.
     for key, value in st.session_state.get("_live_prefs", {}).items():
         st.session_state.setdefault(key, value)
+    for key, value in AUTO_DEFAULTS.items():
+        st.session_state.setdefault(key, value)
+    st.session_state.setdefault("auto_case_made", 0)
+    # The switch of the current generation starts from the server's truth, so a
+    # mid-batch visit to another page does not come back as a phantom "off".
+    gen = int(st.session_state.get("auto_case_gen", 0))
+    st.session_state.setdefault(f"auto_case_switch_{gen}", bool(st.session_state.get("auto_case_on", False)))
 
 
 def _save_prefs() -> None:
     st.session_state["_live_prefs"] = {k: st.session_state[k] for k in PREF_KEYS if k in st.session_state}
+
+
+def _sync_switch(gen: int) -> None:
+    """The analyst moved the switch: honour it, arming resets the batch.
+
+    A stop retires the widget's generation; if the browser then replays its
+    stale value for the retired key, the generation check drops it instead of
+    silently re-arming a batch the analyst never asked for.
+    """
+    if gen != int(st.session_state.get("auto_case_gen", 0)):
+        return                                       # a retired key's stale replay
+    on = bool(st.session_state[f"auto_case_switch_{gen}"])
+    st.session_state["auto_case_on"] = on
+    if on:
+        st.session_state["auto_case_made"] = 0
+
+
+def render_alert_popover() -> tuple[bool, float, int]:
+    """Automatic case creation: on/off, the risk cut-off, and the batch size."""
+    on = bool(st.session_state.get("auto_case_on", False))
+    made = int(st.session_state.get("auto_case_made", 0))
+    limit = int(st.session_state.get("auto_case_limit", 50) or 0)
+    # The generation in the key matters: when the batch fills, the switch is
+    # turned off by the app itself. Writing to a widget's key does not stop the
+    # browser from replaying its stale "on" for the old key, which silently
+    # re-armed the batch. A fresh key per stop leaves the old value homeless.
+    gen = int(st.session_state.get("auto_case_gen", 0))
+    with popover()("Alert"):
+        st.toggle("Create cases automatically", key=f"auto_case_switch_{gen}",
+                  on_change=_sync_switch, args=(gen,),
+                  help="Every alert at or above the risk score below is copied into an investigation "
+                       "case the moment it arrives, so a high-risk alert cannot slip through the feed "
+                       "unnoticed. The analyst still decides how each case ends.")
+        min_risk = st.slider("Only above risk score", 90.0, 100.0, 99.0, 0.1, key="auto_case_min_risk",
+                             help="Applies to new alerts only; cases already stored are never changed.")
+        limit = st.number_input("Stop after this many cases", 0, 1000, 50, 10, key="auto_case_limit",
+                                help="The batch. When it is full the switch turns itself off and nothing "
+                                     "more is created until you switch it back on. 0 = no limit.")
+        if limit and made >= limit:
+            st.caption(":orange[Batch full — switch it on again for a new batch.]")
+        elif limit:
+            st.caption(f"{'On' if on else 'Off'} · {made} of {int(limit)} automatic cases in this batch.")
+        elif on:
+            st.caption(f"On · {made} automatic cases so far, no limit.")
+        else:
+            st.caption("Off — alerts are only kept when you open a case yourself.")
+    return on, float(min_risk), int(limit)
+
+
+def _stop_autocase() -> None:
+    """Pause automatic creation: server truth off, the widget's generation retired.
+
+    There is deliberately no st.rerun here. A rerun from inside the fragment
+    breaks the browser session, and the reconnecting tab replays its stale
+    "switch on" — silently re-arming the batch. Instead the switch is off for
+    the app from this tick on, the retired key keeps the browser's stale value
+    harmless, the toast tells the analyst what happened, and the live status
+    line in the alerts panel turns to "paused" within a second. The switch
+    itself redraws in its new generation at the next interaction.
+    """
+    st.session_state["auto_case_on"] = False
+    st.session_state["auto_case_gen"] = int(st.session_state.get("auto_case_gen", 0)) + 1
+    if hasattr(st, "toast"):
+        st.toast("Automatic case creation is paused: the batch is full. Open the Alert settings "
+                 "to start a new one.")
 
 
 def _select_alert(txn_id: int) -> None:
@@ -160,6 +240,46 @@ def open_alert_popup(txn_id: int, policy: Policy, show_truth: bool) -> None:
     _show()
 
 
+def _autocase_status() -> None:
+    """Live one-liner about automatic case creation, fresh every tick.
+
+    This is what the analyst actually watches: the switch in the Alert settings
+    only redraws on a full run, while this line is part of the ticking panel.
+    """
+    limit = int(st.session_state.get("auto_case_limit", 50) or 0)
+    made = int(st.session_state.get("auto_case_made", 0))
+    on = bool(st.session_state.get("auto_case_on", False))
+    full = bool(limit) and made >= limit
+    if full:
+        st.caption(":orange[Auto-case paused — batch full. Switch it on again for a new batch.]")
+    elif on:
+        st.caption(f"Auto-case on · {made} of {limit} opened" if limit else f"Auto-case on · {made} opened")
+    # Off stays silent: the panel is about the alerts, not about a disabled feature.
+
+
+def _autocase(rows) -> None:
+    """Turn the alerts that just arrived into cases, while the batch has room."""
+    on = bool(st.session_state.get("auto_case_on", False))
+    if not on:
+        return
+    limit = int(st.session_state.get("auto_case_limit", 50) or 0)
+    made = int(st.session_state.get("auto_case_made", 0))
+    room = 0 if limit == 0 else max(limit - made, 0)
+    if limit and room == 0:                          # the batch was already full
+        _stop_autocase()
+        return
+    alerts = rows[rows["decision"] != APPROVE]
+    if alerts.empty:
+        return
+    store = get_case_store(str(cases_path()))
+    created = auto_open(store, alerts.itertuples(),
+                        float(st.session_state.get("auto_case_min_risk", 99.0)), room)
+    if created:
+        st.session_state["auto_case_made"] = made + created
+    if limit and made + created >= limit:
+        _stop_autocase()
+
+
 def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show_truth: bool) -> None:
     """Process what arrived since the last tick and draw the whole live screen."""
     if st.session_state.get("alert_to_open") is not None and hasattr(st, "dialog"):
@@ -169,6 +289,9 @@ def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show
     except Exception as exc:                        # keep the page alive and say what broke
         st.error(f"The live simulator stopped while processing new transactions: {exc}")
         return
+    if info["new"]:
+        # tail() rather than a column slice: the stream trims old rows when it grows.
+        _autocase(stream.rows.tail(int(info["new"])))
     if info["caught_up_minutes"] >= AWAY_MINUTES and hasattr(st, "toast"):
         st.toast(f"While you were away, {info['new']:,} simulated transactions arrived "
                  f"and {info['new_alerts']:,} raised an alert.")
@@ -185,6 +308,7 @@ def draw(stream: LiveStream, engine, policy, costs, settings: LiveSettings, show
         with st.container(border=True):
             m = view["metrics"]
             st.markdown(ui.alerts_title_html(m["reviewed"] + m["blocked"]), unsafe_allow_html=True)
+            _autocase_status()
             alerts = stream.alerts(10)
             if alerts.empty:
                 st.markdown(ui.alert_hint_html(), unsafe_allow_html=True)
@@ -206,13 +330,15 @@ def render(header, tag: str, run, engine) -> None:
     _restore_prefs()
     header.markdown(ui.header_html("live", "PaySim format · every transaction scored as it arrives",
                                    "Live simulation"), unsafe_allow_html=True)
-    cols = st.columns([1.5, 1.2, 1.4, 3])
+    cols = st.columns([1.5, 1.0, 1.3, 1.15, 3])
     with cols[0]:
         policy = render_policy_popover()
     with cols[1]:
         costs = render_costs_popover()
     with cols[2]:
         settings, show_truth = render_simulator_popover()
+    with cols[3]:
+        render_alert_popover()
     _save_prefs()
 
     stream = get_stream(engine)
