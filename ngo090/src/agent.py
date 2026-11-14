@@ -309,6 +309,13 @@ def _numbers(text: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 # The recommendation rules
 # --------------------------------------------------------------------------- #
+def _rank(priority: str) -> int:
+    """Where a priority sits in the queue. Unknown values sort lowest."""
+    from src.cases import PRIORITIES
+
+    return PRIORITIES.index(priority) if priority in PRIORITIES else -1
+
+
 def _recommend(case: Case, assessment: Assessment | None, related: RelatedResult | None,
                cluster: int) -> Recommendation:
     """The explicit rule list. Deterministic, order-sensitive, no model involved.
@@ -317,6 +324,10 @@ def _recommend(case: Case, assessment: Assessment | None, related: RelatedResult
     than with a black box. The Risk Manager's decision is an input, never an
     output: when a rule recommends something the policy did not, the proposal is
     flagged as an override.
+
+    No rule proposes a change that is already true. A recommendation to do what
+    the case already says is worse than no recommendation: it fills the approval
+    queue with no-ops and teaches the analyst to stop reading.
     """
     decision = assessment.decision if assessment is not None else case.decision
     risk = float(assessment.risk) if assessment is not None else float(case.risk)
@@ -339,8 +350,16 @@ def _recommend(case: Case, assessment: Assessment | None, related: RelatedResult
                        f"nothing to change while the investigation is open"),
             support=1)
 
-    # R3: very high risk sent to review -> it is at the top of the review queue, mark it.
+    # R3: very high risk sent to review -> it belongs at the top of the queue.
+    # If it already is, say that instead of filing a proposal that changes nothing.
     if decision == REVIEW and risk >= 95.0:
+        if _rank(case.priority) >= _rank("urgent"):
+            return Recommendation(
+                kind="keep_open", rule="R3",
+                rationale=(f"risk {risk:.1f} is far above the review threshold and the case is "
+                           f"already urgent; the queue position is right, so there is nothing to "
+                           f"change"),
+                support=2)
         return Recommendation(
             kind="escalate", rule="R3",
             rationale=(f"risk {risk:.1f} is far above the review threshold, so the case should be "
@@ -349,6 +368,13 @@ def _recommend(case: Case, assessment: Assessment | None, related: RelatedResult
 
     # R4: a cluster of near-threshold transactions around a reviewed one.
     if decision == REVIEW and cluster >= CLUSTER_MIN:
+        if _rank(case.priority) >= _rank("high"):
+            return Recommendation(
+                kind="keep_open", rule="R4",
+                rationale=(f"{cluster} related transactions also score at or above "
+                           f"{CLUSTER_RISK:.0f}, but the case already carries "
+                           f"{case.priority_label.lower()} priority; nothing to change"),
+                support=1 + cluster)
         return Recommendation(
             kind="escalate", rule="R4",
             rationale=(f"{cluster} related transactions also score at or above {CLUSTER_RISK:.0f}; "
@@ -359,6 +385,14 @@ def _recommend(case: Case, assessment: Assessment | None, related: RelatedResult
     # suspicious cluster. This is the one rule that can contradict the policy on
     # purpose -- and it says so, so approving it takes a deliberate override.
     if decision == APPROVE and cluster >= CLUSTER_MIN and getattr(assessment, "applicable", False):
+        if _rank(case.priority) >= _rank("high"):
+            return Recommendation(
+                kind="keep_open", rule="R5",
+                rationale=(f"the policy approves this transaction but {cluster} related "
+                           f"transactions score at or above {CLUSTER_RISK:.0f}; the case already "
+                           f"carries {case.priority_label.lower()} priority, so it stays where "
+                           f"it is"),
+                support=cluster)
         return Recommendation(
             kind="escalate", rule="R5", requires_override=True,
             rationale=(f"the policy approves this transaction, but {cluster} related transactions "
@@ -570,6 +604,21 @@ class InvestigationAgent:
         if self.proposals is None:
             raise ToolError("This agent has no proposal store, so it cannot file anything.")
         rec = investigation.recommendation
+        case = investigation.case
+        # Second gate, independent of the rules: a proposal nobody needs to
+        # approve is noise in the queue. If every proposed value already holds,
+        # there is nothing to decide, so nothing is filed.
+        pending = [
+            (rec.proposed_status, case.status),
+            ("closed" if rec.proposed_state == "closed" else "open" if rec.proposed_state else "",
+             "closed" if case.closed else "open"),
+            (rec.proposed_priority, case.priority),
+        ]
+        if not any(value and value != current for value, current in pending):
+            raise ToolError(
+                f"{case.case_id} already matches this recommendation "
+                f"({rec.label.lower()}), so there is nothing to approve. "
+                f"The investigation is still shown; only the proposal was skipped.")
         return self.proposals.create(
             investigation.case.case_id, rec.kind, rationale=rec.rationale,
             narrative=investigation.narrative,

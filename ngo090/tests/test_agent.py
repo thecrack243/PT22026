@@ -111,7 +111,8 @@ def test_investigating_twice_leaves_the_case_untouched(tmp_path):
 
 def test_filing_writes_a_proposal_and_not_a_case_change(tmp_path):
     queue = ProposalStore(tmp_path / "proposals.db")
-    tools, store, case, tx = build(tmp_path, queue=queue)
+    # A reviewed case that is not yet urgent: the advice is real, so it files.
+    tools, store, case, tx = build(tmp_path, policy=NEVER_BLOCK, priority="low", queue=queue)
     before = store.get(case.number)
 
     agent = agent_for(tools, tx, queue=queue, corpus=CLUSTER)
@@ -156,10 +157,42 @@ def test_r2_a_blocked_urgent_case_is_left_alone(tmp_path):
 
 
 def test_r3_very_high_review_is_escalated(tmp_path):
-    investigation = rule_of(tmp_path, policy=NEVER_BLOCK)
+    investigation = rule_of(tmp_path, policy=NEVER_BLOCK, priority="low")
     assert investigation.policy_decision == "review"
     assert investigation.recommendation.rule == "R3"
     assert investigation.recommendation.proposed_priority == "urgent"
+
+
+def test_r3_does_not_escalate_a_case_that_is_already_urgent(tmp_path):
+    """The case in the screenshot: R3 said "escalate" to an already-urgent case.
+
+    A recommendation to do what is already true is not advice, it is noise in
+    the approval queue, so the same rule reports the queue position instead.
+    """
+    investigation = rule_of(tmp_path, policy=NEVER_BLOCK, priority="urgent")
+    assert investigation.policy_decision == "review"
+    assert (investigation.recommendation.kind, investigation.recommendation.rule) == ("keep_open", "R3")
+    assert not investigation.recommendation.changes_anything
+    assert "nothing to change" in investigation.recommendation.rationale
+
+
+def test_r4_never_downgrades_an_urgent_case(tmp_path):
+    investigation = rule_of(tmp_path, policy=EAGER_REVIEW, tx=MID, corpus=CLUSTER, priority="urgent")
+    assert investigation.recommendation.rule == "R4"
+    assert investigation.recommendation.kind == "keep_open"
+    assert not investigation.recommendation.changes_anything
+
+
+def test_a_proposal_that_changes_nothing_is_not_filed(tmp_path):
+    queue = ProposalStore(tmp_path / "proposals.db")
+    tools, store, case, tx = build(tmp_path, policy=NEVER_BLOCK, priority="urgent", queue=queue)
+    agent = agent_for(tools, tx, queue=queue, corpus=CLUSTER)
+    with pytest.raises(ToolError) as err:
+        agent.file(agent.investigate(case.number))
+    assert "nothing to approve" in str(err.value)
+    assert queue.pending() == []
+    assert store.get(case.number) == case
+    queue.close()
 
 
 def test_r4_a_cluster_escalates_a_review(tmp_path):

@@ -91,15 +91,20 @@ def _assistant(case, tag: str) -> None:
 
     st.markdown(ui.investigation_html(result), unsafe_allow_html=True)
     left, right = st.columns([1, 1])
-    if left.button("Send for approval", key=f"file_agent_{case.number}", type="primary"):
-        try:
-            filed = agent_for(toolkit(tag)).file(result)
-        except ToolError as exc:
-            st.error(str(exc))
-            return
-        st.session_state.pop(key, None)
-        st.toast(f"Proposal {filed.number} sent for approval")
-        st.rerun()
+    if result.recommendation.changes_anything:
+        if left.button("Send for approval", key=f"file_agent_{case.number}", type="primary"):
+            try:
+                filed = agent_for(toolkit(tag)).file(result)
+            except ToolError as exc:
+                st.error(str(exc))
+                return
+            st.session_state.pop(key, None)
+            st.toast(f"Proposal {filed.number} sent for approval")
+            st.rerun()
+    else:
+        # A recommendation to do what is already true needs no approver; the
+        # reading above is still useful, so it stays on screen.
+        left.caption("No decision needed: the case already matches this recommendation.")
     if right.button("Discard", key=f"discard_agent_{case.number}"):
         st.session_state.pop(key, None)
         st.rerun()
