@@ -218,7 +218,7 @@ padding:3px 9px;border-radius:999px;background:rgba(139,92,246,.16);color:#c4b5f
 border:1px solid rgba(139,92,246,.42);}
 .fa-badge.ok{background:rgba(34,197,94,.14);color:#86efac;border-color:rgba(34,197,94,.4);}
 .fa-badge.warn{background:rgba(245,158,11,.14);color:#fcd34d;border-color:rgba(245,158,11,.42);}
-.fa-narr{font-size:14px;line-height:1.62;color:#dbe6f8;margin:0 0 12px;}
+.fa-narr{font-size:14px;line-height:1.62;color:#dbe6f8;margin:0 0 12px;max-width:86ch;}
 .fa-rec{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 13px;border-radius:12px;
 background:rgba(255,255,255,.035);border:1px solid rgba(96,140,220,.18);margin-bottom:12px;}
 .fa-rec b{font-size:15px;}
@@ -230,7 +230,9 @@ background:rgba(255,255,255,.035);border:1px solid rgba(96,140,220,.18);margin-b
 .fa-tag.pending{background:rgba(59,130,246,.16);color:#93c5fd;border:1px solid rgba(59,130,246,.38);}
 .fa-tag.approved{background:rgba(34,197,94,.16);color:#86efac;border:1px solid rgba(34,197,94,.38);}
 .fa-tag.rejected{background:rgba(148,163,184,.12);color:#cbd5e1;border:1px solid rgba(148,163,184,.26);}
-.fa-evlist{display:flex;flex-direction:column;gap:7px;}
+/* Evidence reads as columns once the panel has the width of the page, and as a
+   single list when it does not. */
+.fa-evlist{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px 26px;}
 .fa-ev{display:flex;gap:9px;align-items:flex-start;font-size:13.2px;color:#cfdcf2;line-height:1.45;}
 .fa-ev i{flex:0 0 auto;width:7px;height:7px;border-radius:50%;margin-top:6px;}
 .fa-ev.fact i{background:#22c55e;}.fa-ev.risk i{background:#f43f5e;}
@@ -548,19 +550,30 @@ def card(title: str, body: str, ic: str = "bars", legend: str = "") -> str:
 # --------------------------------------------------------------------------- #
 # Page pieces
 # --------------------------------------------------------------------------- #
-def header_html(state: str, period: str, title: str) -> str:
-    """Page heading: the mode name on the left, the data window and status on the right."""
+def header_html(state: str, period: str, title: str, pill: bool = True) -> str:
+    """Page heading: the mode name on the left, the data window and status on the right.
+
+    `pill=False` leaves the status slot to the page, for the case page, where
+    the status pill sits beside a real button instead of alone in the heading.
+    """
     label, dot = {"ready": ("Ready", "idle"), "playing": ("Replay running", "live"),
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
                   "testing": ("Ready to test", "live"), "live": ("Simulated live", "live"),
                   "cases": ("Stored on disk", "done"), "audit": ("Append-only", "done"),
                   "case": ("Case file", "done"),
                   "approvals": ("Human in the loop", "idle")}[state]
+    status = (f'<div class="fa-pills"><div class="fa-pill"><i class="fa-dot {dot}"></i>{label}</div></div>'
+              if pill else "")
     return compact(
         f'<div class="fa-root"><div class="fa-head"><div>'
         f'<div class="fa-ptitle">{escape(title)}</div>'
-        f'<div class="fa-psub">{escape(period)}</div></div>'
-        f'<div class="fa-pills"><div class="fa-pill"><i class="fa-dot {dot}"></i>{label}</div></div></div></div>')
+        f'<div class="fa-psub">{escape(period)}</div></div>{status}</div></div>')
+
+
+def status_pill_html(label: str, dot: str = "done") -> str:
+    """The heading's status pill on its own, so it can stand beside a button."""
+    return compact(f'<div class="fa-root"><div class="fa-pills">'
+                   f'<div class="fa-pill"><i class="fa-dot {dot}"></i>{escape(label)}</div></div></div>')
 
 
 def sidebar_brand() -> str:

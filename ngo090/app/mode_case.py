@@ -133,8 +133,10 @@ def _investigation_panel(case, tag: str) -> None:
         return
 
     st.markdown(ui.investigation_html(result), unsafe_allow_html=True)
-    left, right = st.columns([1, 1])
+    # The panel spans the page now, so the two buttons keep a button's width
+    # instead of stretching across it.
     if result.recommendation.changes_anything:
+        left, right, _ = st.columns([1, 1, 5])
         if left.button("Send for approval", key=f"file_agent_{case.number}", type="primary"):
             try:
                 filed = agent_for(toolkit(tag)).file(result)
@@ -144,13 +146,17 @@ def _investigation_panel(case, tag: str) -> None:
             st.session_state.pop(key, None)
             st.toast(f"Proposal {filed.number} sent for approval")
             st.rerun()
+        if right.button("Discard", key=f"discard_agent_{case.number}"):
+            st.session_state.pop(key, None)
+            st.rerun()
     else:
         # A recommendation to do what is already true needs no approver; the
         # reading above is still useful, so it stays on screen.
-        left.caption("No decision needed: the case already matches this recommendation.")
-    if right.button("Discard", key=f"discard_agent_{case.number}"):
-        st.session_state.pop(key, None)
-        st.rerun()
+        note, discard, _ = st.columns([3, 1, 3])
+        note.caption("No decision needed: the case already matches this recommendation.")
+        if discard.button("Discard", key=f"discard_agent_{case.number}"):
+            st.session_state.pop(key, None)
+            st.rerun()
 
 
 # --------------------------------------------------------------------------- #
@@ -242,6 +248,33 @@ def _chat(case, tools: Toolkit, pilot) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# The history, on demand
+# --------------------------------------------------------------------------- #
+def open_history(case, events) -> None:
+    """The case's audit trail in a pop-up, so the page keeps its room for work.
+
+    It used to be a panel of its own at the bottom of the page, which made the
+    page long for something an analyst reads occasionally. A dialog reads better
+    and is one click away from the heading.
+    """
+    @st.dialog("Investigation history", width="large")
+    def _show() -> None:
+        count = len(events)
+        st.markdown(
+            f'<div class="fa-root"><div class="fa-psub" style="margin:-6px 0 14px">'
+            f'{ui.escape(case.case_id)} &middot; {count} '
+            f'{"event" if count == 1 else "events"} &middot; newest first</div></div>',
+            unsafe_allow_html=True)
+        if events:
+            st.markdown(ui.case_history_html(events), unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="fa-note">Nothing recorded yet: no edit has touched '
+                        'this case since it was opened.</div>', unsafe_allow_html=True)
+
+    _show()
+
+
+# --------------------------------------------------------------------------- #
 # The page
 # --------------------------------------------------------------------------- #
 def render(header, store, tag: str = "") -> None:
@@ -258,15 +291,27 @@ def render(header, store, tag: str = "") -> None:
 
     tools = toolkit(tag) if tag else Toolkit(cases=store)
     pilot = pilot_for(tools)
+    events = store.events(case.number)
 
-    nav = st.columns([0.22, 0.78])
+    # Heading: back, the case, then the status pill and its history beside it.
+    nav = st.columns([0.17, 0.55, 0.28], vertical_alignment="center")
     if nav[0].button("All cases", key="case_back", icon=":material/arrow_back:"):
         _back()
         st.rerun()
     nav[1].markdown(ui.header_html(
         "case", f"transaction #{int(case.txn_id)} · {case.tx_type.replace('_', ' ').lower() or 'unknown'} · "
-                f"{case.priority_label.lower()} priority", f"Case {case.case_id}"),
+                f"{case.priority_label.lower()} priority", f"Case {case.case_id}", pill=False),
         unsafe_allow_html=True)
+    opened = False
+    with nav[2]:
+        with st.container(horizontal=True, horizontal_alignment="right",
+                          vertical_alignment="center", gap="small"):
+            st.markdown(ui.status_pill_html("Case file"), unsafe_allow_html=True)
+            opened = st.button(f"History · {len(events)}" if events else "History",
+                               key="case_history", icon=":material/history:",
+                               help="Everything that happened to this case: who changed what, and when.")
+    if opened:
+        open_history(case, events)
 
     left, right = st.columns([1.55, 1], gap="medium")
     with left:
@@ -275,16 +320,6 @@ def render(header, store, tag: str = "") -> None:
     with right:
         _chat(case, tools, pilot)
 
-    explain, trail = st.columns([1.55, 1], gap="medium")
-    with explain:
-        if tag:
-            _investigation_panel(case, tag)
-    with trail:
-        events = store.events(case.number)
-        st.markdown('<div class="fa-sub2" style="margin-top:4px">Investigation history</div>',
-                    unsafe_allow_html=True)
-        if events:
-            st.markdown(ui.case_history_html(events), unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="fa-note">Nothing recorded yet.</div>',
-                        unsafe_allow_html=True)
+    if tag:
+        _investigation_panel(case, tag)
+

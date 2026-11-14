@@ -268,9 +268,15 @@ def test_the_case_lifecycle_on_the_case_page(tmp_path, monkeypatch):
     reopened = store.get(case.case_id)
     assert not reopened.closed and reopened.status == "confirmed_fraud"
 
-    # The audit trail is on the page too: open -> status -> close -> reopen.
-    trail = "".join(m.value for m in at.markdown)
-    assert "Investigation history" in trail
+    # The audit trail is one click away beside the status pill, not a panel of
+    # its own: open -> status -> close -> reopen.
+    history = [b for b in at.button if b.key == "case_history"][0]
+    assert history.label.startswith("History")
+    history.click().run()
+    assert not at.exception
+    dialogs = at.get("dialog")
+    assert len(dialogs) == 1, "History opens the trail in a pop-up"
+    trail = "".join(m.value for m in dialogs[0].markdown)
     assert "Opened from alert #77" in trail
     assert "Status: Investigating -&gt; Confirmed fraud" in trail
     assert "Case closed" in trail and "Case reopened" in trail

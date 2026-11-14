@@ -280,7 +280,7 @@ An optional language-model writer only rephrases the narrative. It sees nothing 
 
 ### 7.10 The case page, and RiskPilot in conversation
 
-A case used to open in a pop-up. It now has its own page (`app/mode_case.py`): the alert's "Open investigation case" button lands there, every case card in the list opens it, and the page carries everything the pop-up did — the facts, the risk bar, the editable fields, the investigation history — plus the two things an investigation deserves more room for: the assistant's evidence panel and **RiskPilot**, the assistant in conversation (`src/assistant.py`).
+A case used to open in a pop-up. It now has its own page (`app/mode_case.py`): the alert's "Open investigation case" button lands there, every case card in the list opens it, and the page carries everything the pop-up did — the facts, the risk bar, the editable fields — plus the two things an investigation deserves more room for: the assistant's evidence panel and **RiskPilot**, the assistant in conversation (`src/assistant.py`). The investigation history lives behind a **History** button beside the "Case file" pill in the heading, opening in a pop-up so the page stays short.
 
 RiskPilot is the same read-only assistant with a mouth. The analyst can ask why a case was flagged, what the risk and policy decision are, what related transactions exist, or what the notes and history say — every answer is assembled deterministically from the tool layer, grounded in the case record, and it says so when the live row is missing and it cannot re-score. The analyst can also ask for a change: "mark it false positive", "close as confirmed fraud", "set priority to urgent", "reopen the case", or "add this to the note: …".
 
