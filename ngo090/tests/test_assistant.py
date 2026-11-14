@@ -59,6 +59,13 @@ def world(tmp_path):
     ("make it urgent", "priority", "urgent"),
     ("escalate", "priority", "urgent"),
     ("reopen the case", "reopen", ""),
+    # a command is often a continuation of the previous message
+    ("and mark it as confirmed fraud", "resolution", "confirmed_fraud"),
+    ("And mark it as confirmed fraud", "resolution", "confirmed_fraud"),
+    ("then close it", "close", ""),
+    ("also set priority to urgent", "priority", "urgent"),
+    ("so make it urgent", "priority", "urgent"),
+    ("ok and then reopen the case", "reopen", ""),
     ("help", "help", ""),
     ("what can you do?", "help", ""),
     ("hello", "greeting", ""),

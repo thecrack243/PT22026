@@ -42,6 +42,7 @@ _COMMAND_VERBS = ("mark", "close", "set", "flag", "resolve", "treat", "classify"
                   "add", "append", "write", "put", "reopen", "escalate", "make",
                   "change", "raise", "lower", "bump", "move")
 _POLITE = re.compile(r"^(?:please|kindly|can you|could you|would you|will you|hey|hi|ok|okay)\b[\s,]*")
+_LEAD_IN = re.compile(r"^(?:and|then|also|so)\b[\s,]*")
 
 MAX_NOTE = 2_000          # a note longer than this is a paste, not a note
 
@@ -76,10 +77,17 @@ class Intent:
 
 
 def _core(message: str) -> str:
-    """The sentence without politeness, punctuation and extra spaces."""
+    """The sentence without politeness, lead-ins, punctuation and extra spaces.
+
+    Lead-ins ("and", "then", "also", "so") are stripped because a command is
+    often a continuation of the previous message -- "and mark it confirmed
+    fraud" means exactly "mark it confirmed fraud". A note's text is read
+    from the raw message, so this never rewrites what the analyst said.
+    """
     text = " ".join(str(message or "").split()).strip().lower()
     while True:
         stripped = _POLITE.sub("", text)
+        stripped = _LEAD_IN.sub("", stripped)
         if stripped == text:
             break
         text = stripped
