@@ -276,7 +276,7 @@ The recommendation comes from named rules, not from a model: R1 escalates blocke
 
 A proposal that would change the case in a way the policy contradicts carries an override flag, and the Approvals page (a new workspace page) requires an explicit override checkbox before such a proposal can be approved. Approving applies the change through `update_case`, records who approved it and appends the decision to the case's own history; rejecting touches nothing.
 
-An optional language-model writer only rephrases the narrative. It sees nothing but the evidence list, and any reply that introduces a number the evidence does not contain is discarded in favour of the deterministic template — a failed or hallucinating writer degrades to the template wording, recorded as such. Everything the assistant did is shown on screen as a step trace with timings, an evidence list with the tool each fact came from, and an explicit "what was not checked, and why" section.
+An optional language-model writer only rephrases the narrative. It sees nothing but the evidence list, and any reply that introduces a number the evidence does not contain is discarded in favour of the deterministic template — a failed or hallucinating writer degrades to the template wording, recorded as such. The screen shows the narrative, the evidence list and an explicit "what was not checked, and why" section; the full step trace with timings and the tool each fact came from is kept in the data — it rides along with the proposal when one is filed — so the work stays auditable without exposing function names to the analyst.
 
 ## 8. Tests
 

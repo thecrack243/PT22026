@@ -314,8 +314,9 @@ def test_the_assistant_runs_from_the_case_pop_up_and_waits_for_approval(tmp_path
     assert not at.exception
 
     panel = all_text(at)
-    assert "How it got there" in panel            # the step trace
-    assert "Rule" not in panel or "rule R" in panel
+    assert "Evidence (" in panel                  # the sourced facts
+    assert "get_case" not in panel                # tool names stay in the data, not on screen
+    assert "rule R" in panel
     unchanged = store.get(case.case_id)
     assert unchanged.priority == "low" and unchanged.status == "investigating"
 

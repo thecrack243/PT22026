@@ -236,17 +236,9 @@ background:rgba(255,255,255,.035);border:1px solid rgba(96,140,220,.18);margin-b
 .fa-ev.fact i{background:#22c55e;}.fa-ev.risk i{background:#f43f5e;}
 .fa-ev.related i{background:#f59e0b;}.fa-ev.history i{background:#60a5fa;}
 .fa-ev.gap i{background:#94a3b8;}
-.fa-ev small{color:#7f93b3;font-size:11.5px;margin-left:5px;}
 .fa-gaps{margin-top:12px;padding:11px 13px;border-radius:12px;background:rgba(245,158,11,.08);
 border:1px solid rgba(245,158,11,.3);font-size:12.8px;color:#fde68a;line-height:1.5;}
 .fa-gaps b{color:#fcd34d;}
-.fa-trace{display:flex;flex-direction:column;gap:6px;font-size:12.6px;color:#a9bddb;}
-.fa-trow{display:grid;grid-template-columns:16px 118px minmax(0,1fr) 52px;gap:8px;align-items:baseline;}
-.fa-trow .n{color:#5f7396;font-variant-numeric:tabular-nums;}
-.fa-trow .k{color:#dbe6f8;font-weight:600;}
-.fa-trow .d{color:#93a8c8;}
-.fa-trow .ms{color:#5f7396;text-align:right;font-variant-numeric:tabular-nums;}
-.fa-trow.skip .k{color:#8fa3c2;font-weight:500;}
 </style>
 """
 
@@ -1046,9 +1038,10 @@ def case_history_html(events) -> str:
 def investigation_html(investigation) -> str:
     """One investigation: what the assistant read, what it recommends, why.
 
-    The trace is part of the output on purpose. An assistant whose work cannot
-    be audited step by step is not safer than no assistant, and this one has
-    nothing to hide: every line below came from a call to src/tools.py.
+    Provenance stays in the data, not on the screen: every evidence item
+    carries its source in `Investigation.evidence`, and the step trace is
+    stored with the proposal when it is filed -- readable in the audit
+    record, without turning the panel into a function-name dump.
     """
     rec = investigation.recommendation
     writer = "template" if investigation.writer == "template" else investigation.writer
@@ -1058,8 +1051,7 @@ def investigation_html(investigation) -> str:
         tags.append('<span class="fa-badge warn">overrides the policy</span>')
 
     evidence = "".join(
-        f'<div class="fa-ev {e.kind}"><i></i><div>{escape(e.text)}'
-        f'<small>{escape(e.source)}</small></div></div>'
+        f'<div class="fa-ev {e.kind}"><i></i><div>{escape(e.text)}</div></div>'
         for e in investigation.evidence)
 
     gaps = ""
@@ -1067,17 +1059,8 @@ def investigation_html(investigation) -> str:
         items = "".join(f"<div>• {escape(g)}</div>" for g in investigation.gaps)
         gaps = f'<div class="fa-gaps"><b>What was not checked, and why</b>{items}</div>'
 
-    rows = []
-    for n, step in enumerate(investigation.steps, 1):
-        rows.append(
-            f'<div class="fa-trow{" skip" if not step.ok else ""}"><span class="n">{n}</span>'
-            f'<span class="k">{escape(step.label)}</span>'
-            f'<span class="d">{escape(step.detail)}</span>'
-            f'<span class="ms">{step.ms:.0f} ms</span></div>')
-    trace = "".join(rows)
-
     return compact(
-        f'<div class="fa-root"><div class="fa-assist">'
+        f'<div class="fa-root"><div class="fa-assist" style="margin-bottom:16px">'
         f'<div class="fa-assist-top">{"".join(tags)}</div>'
         f'<div class="fa-narr">{escape(investigation.narrative)}</div>'
         f'<div class="fa-rec"><span class="fa-tag {rec.kind}">{escape(rec.label)}</span>'
@@ -1086,8 +1069,6 @@ def investigation_html(investigation) -> str:
         f'<div class="fa-sub2" style="margin-top:4px">Evidence ({len(investigation.evidence)})</div>'
         f'<div class="fa-evlist">{evidence}</div>'
         f'{gaps}'
-        f'<div class="fa-sub2">How it got there</div>'
-        f'<div class="fa-trace">{trace}</div>'
         f'</div></div>')
 
 
