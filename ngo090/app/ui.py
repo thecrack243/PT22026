@@ -229,6 +229,7 @@ background:rgba(255,255,255,.035);border:1px solid rgba(96,140,220,.18);margin-b
 .fa-tag.escalate{background:rgba(245,158,11,.16);color:#fcd34d;border:1px solid rgba(245,158,11,.42);}
 .fa-tag.close_fraud{background:rgba(244,63,94,.18);color:#fda4af;border:1px solid rgba(244,63,94,.4);}
 .fa-tag.close_false_positive{background:rgba(34,197,94,.16);color:#86efac;border:1px solid rgba(34,197,94,.38);}
+.fa-tag.resolution{background:rgba(56,189,248,.14);color:#7dd3fc;border:1px solid rgba(56,189,248,.38);}
 .fa-tag.keep_open{background:rgba(148,163,184,.14);color:#cbd5e1;border:1px solid rgba(148,163,184,.3);}
 .fa-tag.pending{background:rgba(59,130,246,.16);color:#93c5fd;border:1px solid rgba(59,130,246,.38);}
 .fa-tag.approved{background:rgba(34,197,94,.16);color:#86efac;border:1px solid rgba(34,197,94,.38);}

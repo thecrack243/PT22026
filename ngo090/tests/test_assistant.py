@@ -40,11 +40,17 @@ def world(tmp_path):
 # The grammar
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("message, kind, detail", [
-    ("mark it as false positive", "close_false_positive", ""),
+    ("mark it as false positive", "resolution", "false_positive"),
+    ("mark it as confirmed fraud", "resolution", "confirmed_fraud"),
+    ("Can you mark this as false positive?", "resolution", "false_positive"),
+    ("it's a false positive", "resolution", "false_positive"),
+    ("change the resolution to confirmed fraud", "resolution", "confirmed_fraud"),
+    ("set the resolution to false positive", "resolution", "false_positive"),
+    ("close it as false positive", "close_false_positive", ""),
+    ("close it as confirmed fraud", "close_fraud", ""),
+    ("mark it as confirmed fraud and close it", "close_fraud", ""),
     ("Mark this case as closed", "close", ""),
     ("close as confirmed fraud", "close_fraud", ""),
-    ("Can you mark this as false positive?", "close_false_positive", ""),
-    ("it's a false positive", "close_false_positive", ""),
     ("add this in the note: Called the customer", "note", "Called the customer"),
     ("note: the customer confirmed the transfer", "note", "the customer confirmed the transfer"),
     ("add a note saying the customer confirmed", "note", "the customer confirmed"),
@@ -88,9 +94,10 @@ def test_a_note_keeps_the_analysts_capitalisation():
 # a wrong correction files the wrong proposal.
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("message, kind, detail", [
-    ("mark it as fals positive", "close_false_positive", ""),
-    ("Mark it as flase positive", "close_false_positive", ""),
-    ("mark it as fraudulant", "close_fraud", ""),
+    ("mark it as fals positive", "resolution", "false_positive"),
+    ("Mark it as flase positive", "resolution", "false_positive"),
+    ("mark it as fraudulant", "resolution", "confirmed_fraud"),
+    ("clsoe it as false positive", "close_false_positive", ""),
     ("set priority to urgant", "priority", "urgent"),
     ("clsoe it", "close", ""),
     ("mrak it as closed", "close", ""),
@@ -248,13 +255,14 @@ def test_a_note_without_content_asks_rather_than_writes(world):
     assert world.cases.get(world.case.case_id).notes == ""
 
 
-def test_a_requested_close_is_a_proposal_and_the_case_does_not_move(world):
+def test_a_stated_verdict_changes_only_the_resolution(world):
+    """"Mark it false positive" sets the verdict; the case stays open."""
     reply = world.pilot.converse(world.case.case_id, "mark it as false positive")
     assert reply.action["kind"] == "proposal"
     proposal = world.queue.get(reply.proposal.number)
-    assert proposal.kind == "close_false_positive"
+    assert proposal.kind == "resolution"
     assert proposal.proposed_status == "false_positive"
-    assert proposal.proposed_state == "closed"
+    assert proposal.proposed_state is None
     assert proposal.pending
     assert proposal.agent == "riskpilot/chat"
     assert "asked me in chat" in proposal.rationale
@@ -264,8 +272,17 @@ def test_a_requested_close_is_a_proposal_and_the_case_does_not_move(world):
     assert untouched.notes == ""
 
 
+def test_a_close_request_proposes_resolution_and_closed(world):
+    reply = world.pilot.converse(world.case.case_id, "close it as false positive")
+    proposal = world.queue.get(reply.proposal.number)
+    assert proposal.kind == "close_false_positive"
+    assert proposal.proposed_status == "false_positive"
+    assert proposal.proposed_state == "closed"
+    assert world.cases.get(world.case.case_id).closed is False   # still only a proposal
+
+
 def test_approving_the_chat_proposal_is_what_moves_the_case(world):
-    reply = world.pilot.converse(world.case.case_id, "mark it as false positive")
+    reply = world.pilot.converse(world.case.case_id, "close it as false positive")
     result = approve(world.queue, world.tools, reply.proposal, by="analyst")
 
     assert result.case.status == "false_positive" and result.case.closed
@@ -273,6 +290,14 @@ def test_approving_the_chat_proposal_is_what_moves_the_case(world):
     assert world.queue.get(reply.proposal.number).status == "approved"
     # and the case record says who did it, through the same update_case path
     assert "Assistant (riskpilot/chat)" in result.case.notes
+
+
+def test_approving_a_resolution_change_leaves_the_case_open(world):
+    """The verdict lands; whether the case closes stays the analyst's call."""
+    reply = world.pilot.converse(world.case.case_id, "mark it as confirmed fraud")
+    result = approve(world.queue, world.tools, reply.proposal, by="analyst")
+
+    assert result.case.status == "confirmed_fraud" and not result.case.closed
 
 
 def test_rejecting_leaves_the_case_exactly_as_it_was(world):
@@ -314,7 +339,7 @@ def test_a_second_request_replaces_the_first_and_says_so(world):
 def test_a_close_that_contradicts_the_policy_says_so_but_needs_no_checkbox(tmp_path):
     """The analyst asked; the override tick is for the assistant's own ideas."""
     world = World(tmp_path, risk=99.2, decision="block")
-    reply = world.pilot.converse(world.case.case_id, "mark it as false positive")
+    reply = world.pilot.converse(world.case.case_id, "close it as false positive")
     assert reply.proposal.requires_override is False
     assert "Risk Manager said" in reply.text
 

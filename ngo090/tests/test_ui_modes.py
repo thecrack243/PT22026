@@ -443,9 +443,20 @@ def test_the_chat_answers_and_applies_only_after_approval(tmp_path, monkeypatch)
     assert not at.exception
     assert store.get(case.case_id).status == "investigating"      # a request, not a change
     proposal = ProposalStore(proposals_db).pending()[0]
-    assert proposal.kind == "close_false_positive"
+    assert proposal.kind == "resolution"
+    assert proposal.proposed_state is None                        # the verdict only
 
     _find_button(at, f"chat_approve_{proposal.number}").click().run()
+    assert not at.exception
+    moved = store.get(case.case_id)
+    assert moved.status == "false_positive" and not moved.closed   # verdict set, still open
+
+    at.chat_input(key=f"chat_input_{case.number}").set_value("close it").run()
+    assert not at.exception
+    close_proposal = ProposalStore(proposals_db).pending()[0]
+    assert close_proposal.kind == "close_false_positive" and close_proposal.proposed_state == "closed"
+
+    _find_button(at, f"chat_approve_{close_proposal.number}").click().run()
     assert not at.exception
     moved = store.get(case.case_id)
     assert moved.status == "false_positive" and moved.closed

@@ -12,7 +12,8 @@ The page keeps the same rule as everything else in this app:
 
 Two ways to ask for a change therefore exist and they meet in the same queue:
 the panel's "Run investigation -> Send for approval" (the rules recommend), and
-the chat ("mark it false positive") where the analyst asks. In both cases a
+the chat ("mark it false positive" sets the resolution, "close it as false
+positive" closes) where the analyst asks. In both cases a
 proposal is filed and the Approve button -- here, beside the message -- is the
 only thing that touches the case.
 """

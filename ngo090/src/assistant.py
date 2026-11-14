@@ -227,15 +227,23 @@ def parse(message: str) -> Intent:
 
     command = bool(re.match(r"^(?:" + "|".join(_COMMAND_VERBS) + r")\b", text))
 
-    # 4 -- a resolution. Both are stated before the generic "close". -----
-    if command and re.search(r"\bfalse[\s-]?positive\b", text):
-        return Intent("close_false_positive", raw=raw)
-    if command and re.search(r"\b(?:confirmed\s+)?(?:fraud|fraudulent)\b", text):
-        return Intent("close_fraud", raw=raw)
-    if re.match(r"^(?:it'?s|this is|that'?s)\s+(?:a\s+|clearly\s+|just\s+)?false[\s-]?positive\b", text):
-        return Intent("close_false_positive", raw=raw)
-    if re.match(r"^(?:it'?s|this is|that'?s)\s+(?:clearly\s+|confirmed\s+)?fraud", text):
-        return Intent("close_fraud", raw=raw)
+    # 4 -- the verdict. Stating a resolution changes the resolution field
+    # only; the case closes when the sentence says close ("close it as ..."),
+    # which is the analyst's separate call -- "mark it confirmed fraud" and
+    # "close it as confirmed fraud" are two different requests.
+    verdict = None
+    if re.search(r"\bfalse[\s-]?positiv\w*\b", text):
+        verdict = "false_positive"
+    elif re.search(r"\b(?:confirmed\s+)?(?:fraud|fraudulent)\b", text):
+        verdict = "confirmed_fraud"
+    closing = bool(re.search(r"\b(?:clos\w*|shut\w*)\b", text))
+    if verdict is not None and (command or "resolution" in text
+                                or re.match(r"^(?:it'?s|this is|that'?s)\b", text)) \
+            and (command or not _is_question(text)):
+        if closing:
+            return Intent("close_false_positive" if verdict == "false_positive"
+                          else "close_fraud", raw=raw)
+        return Intent("resolution", verdict, raw)
 
     # 5 -- "close it", "mark it closed": which resolution? asked later.
     if re.match(r"^close\b", text) or re.match(r"^mark\b.*\bas closed\b", text):
@@ -390,6 +398,8 @@ class RiskPilot:
             return self._social(case, intent)
         if intent.kind == "note":
             return self._note(case, intent)
+        if intent.kind == "resolution":
+            return self._resolution(case, intent)
         if intent.kind == "close_false_positive":
             return self._close(case, intent, "false_positive")
         if intent.kind == "close_fraud":
@@ -423,6 +433,22 @@ class RiskPilot:
         return self._say(case, f"Added to the notes on {case.case_id}: \"{text}\"", intent,
                          action={"kind": "note", "note": text})
 
+    def _resolution(self, case: Case, intent: Intent) -> Reply:
+        """A stated verdict changes the resolution field -- and nothing else.
+
+        The case stays exactly as open or closed as it was: closing is a
+        separate request ("close it as ..."), and an approved resolution
+        change on an open case leaves it open for the analyst to work.
+        """
+        wanted = {"false_positive": "false positive",
+                  "confirmed_fraud": "confirmed fraud"}[intent.detail]
+        if case.status == intent.detail:
+            return self._noop(case, f"{case.case_id}'s resolution is already "
+                                    f"{wanted}.", intent)
+        return self._propose(case, intent, kind="resolution",
+                             summary=f"change the resolution of {case.case_id} to {wanted}",
+                             status=intent.detail)
+
     def _close(self, case: Case, intent: Intent, status: str | None) -> Reply:
         if status is None:
             if case.closed:
@@ -431,8 +457,9 @@ class RiskPilot:
             if case.status == "investigating":
                 return self._say(
                     case,
-                    "Which resolution? I won't pick one for you: say \"mark it false positive\" "
-                    "or \"mark it confirmed fraud\", and I'll prepare that for your approval.",
+                    "Which resolution? I won't pick one for you: say \"close it as false "
+                    "positive\" or \"close it as confirmed fraud\", and I'll prepare that "
+                    "for your approval.",
                     intent, action={"kind": "clarify"})
             status = case.status                      # the resolution already on the case
         closing_now = not case.closed
@@ -729,13 +756,14 @@ class RiskPilot:
         elif rec.kind == "close_false_positive":
             text = ("I'd call this a false positive. The policy approves the transaction and "
                     "nothing around it supports the alert.")
-            text += (" Say \"mark it false positive\" and I'll put it up for approval -- nothing "
-                     "moves until you approve it.")
+            text += (" Say \"close it as false positive\" and I'll put it up for approval -- "
+                     "nothing moves until you approve it. (\"Mark it false positive\" only sets "
+                     "the resolution; the case stays open until you say close.)")
 
         elif rec.kind == "close_fraud":
             text = ("I'd call this confirmed fraud. The evidence points one way and nothing in the "
                     "record argues with it.")
-            text += " Say \"mark it confirmed fraud\" and I'll put it up for approval."
+            text += " Say \"close it as confirmed fraud\" and I'll put it up for approval."
 
         elif decision == BLOCK:
             text = (f"Nothing to do here. It's already blocked and "
@@ -825,11 +853,11 @@ class RiskPilot:
         if rec is None:
             return text + " I can't tell you whether to change it without the transaction's balances."
         if rec.kind == "close_false_positive":
-            return (text + " On this evidence I'd set it to false positive and close -- say \"mark "
-                           "it false positive\" and I'll put it up for approval.")
+            return (text + " On this evidence I'd set it to false positive and close -- say "
+                           "\"close it as false positive\" and I'll put it up for approval.")
         if rec.kind == "close_fraud":
-            return (text + " On this evidence I'd set it to confirmed fraud -- say \"mark it "
-                           "confirmed fraud\" and I'll put it up for approval.")
+            return (text + " On this evidence I'd set it to confirmed fraud and close -- say "
+                           "\"close it as confirmed fraud\" and I'll put it up for approval.")
         if case.status != "investigating":
             # A verdict is already on record: recommending "investigating" would
             # read as if the case had none.

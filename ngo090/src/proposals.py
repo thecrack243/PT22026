@@ -28,7 +28,8 @@ from src.cases import parse_case_id
 # What the agent is asking for. `keep_open` is the "no change" case: the
 # investigation found nothing that justifies moving the case, which is a
 # legitimate outcome and should still be visible to a person.
-KINDS = ("escalate", "close_fraud", "close_false_positive", "keep_open", "priority", "reopen")
+KINDS = ("escalate", "close_fraud", "close_false_positive", "keep_open", "priority",
+         "reopen", "resolution")
 STATUSES = ("pending", "approved", "rejected", "superseded")
 
 KIND_LABELS = {
@@ -38,6 +39,7 @@ KIND_LABELS = {
     "keep_open": "Keep open",
     "priority": "Change priority",
     "reopen": "Reopen",
+    "resolution": "Set resolution",
 }
 STATUS_LABELS = {
     "pending": "Awaiting approval",
