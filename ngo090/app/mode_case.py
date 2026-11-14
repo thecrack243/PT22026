@@ -302,13 +302,8 @@ def render(header, store, tag: str = "") -> None:
         unsafe_allow_html=True)
     with nav[2]:
         with st.container(horizontal=True, horizontal_alignment="right",
-                          vertical_alignment="center", gap="small",
-                          key="case_head_tools"):
-            st.button("Case file", key="case_file_pill", icon=":material/label:",
-                      disabled=True, width="content",
-                      help="The case record is stored on disk.")
-            with st.popover(f"History · {len(events)}" if events else "History",
-                            icon=":material/history:", key="case_history",
+                          vertical_alignment="center", key="case_head_tools"):
+            with st.popover("History", icon=":material/history:", key="case_history",
                             width="content", help="Everything that happened to this "
                             "case: who changed what, and when."):
                 _history_panel(case, events)

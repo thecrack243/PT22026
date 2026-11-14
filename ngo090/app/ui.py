@@ -268,14 +268,9 @@ border-color:rgba(96,165,250,.45);border-radius:14px 4px 14px 14px;color:#f2f7ff
 div[class*="st-key-chat_scroll"]{padding:14px 16px 4px !important;}
 div[class*="st-key-chat_scroll"]::-webkit-scrollbar{width:9px;}
 div[class*="st-key-chat_scroll"]::-webkit-scrollbar-thumb{background:rgba(120,160,220,.32);border-radius:8px;}
-/* The case page's heading tools: a status pill and the History popover on one
-   line, the pair flush right. The pill is a disabled button dressed as a pill. */
+/* The case page's heading tools sit flush right, and the History popover reads
+   like a menu: compact, anchored to its button. */
 div[class*="st-key-case_head_tools"]{justify-content:flex-end;}
-div[class*="st-key-case_file_pill"] button{pointer-events:none;border-radius:999px;
-padding:7px 16px !important;font-size:13px;font-weight:500;color:#cfe0ff;
-background:rgba(255,255,255,.05);border:1px solid rgba(96,140,220,.35);opacity:1;}
-div[class*="st-key-case_file_pill"] button:hover{border-color:rgba(96,140,220,.35);}
-/* The History popover reads like a menu: compact, anchored to its button. */
 div[data-testid="stPopoverBody"]{width:400px;max-width:92vw;}
 div[data-testid="stPopoverBody"] [data-testid="stVerticalBlock"]{gap:.4rem !important;}
 </style>
@@ -563,8 +558,8 @@ def card(title: str, body: str, ic: str = "bars", legend: str = "") -> str:
 def header_html(state: str, period: str, title: str, pill: bool = True) -> str:
     """Page heading: the mode name on the left, the data window and status on the right.
 
-    `pill=False` leaves the status slot to the page, for the case page, where
-    the status pill is a disabled button standing beside the History popover.
+    `pill=False` leaves the right-hand slot to the page: the case page puts its
+    History popover there instead.
     """
     label, dot = {"ready": ("Ready", "idle"), "playing": ("Replay running", "live"),
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
