@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -195,6 +196,75 @@ def render_policy_popover() -> Policy:
                                on_change=mark_custom, help="Reviewers skip transactions that look clearly normal.")
     return Policy(block_threshold=float("inf") if block_risk >= 100 else float(block_risk),
                   review_min_score=float(review_min), daily_capacity=int(capacity), capacity_mode="rolling")
+
+
+# --------------------------------------------------------------------------- #
+# The page in the URL, so a reload lands where the analyst was
+# --------------------------------------------------------------------------- #
+# Streamlit throws session state away when the tab reloads -- the mode button
+# that was pressed is forgotten and the app falls back to the first page. The
+# query string survives, so the page is mirrored there and read back on the
+# first run of a new session.
+PAGE_SLUGS = {
+    "Live simulation": "live",
+    "Historical replay": "replay",
+    "Transaction testing": "testing",
+    "Cases": "cases",
+    "Case": "case",
+    "Audit": "audit",
+    "Approvals": "approvals",
+}
+MODE_BY_SLUG = {slug: mode for mode, slug in PAGE_SLUGS.items()}
+DEFAULT_PAGE = "Live simulation"
+
+
+def page_params(mode: str, case: int | None = None) -> dict[str, str]:
+    """The query string for a page: {"page": "case", "case": "C-0007"}.
+
+    The case number only rides along on the case page -- on the list it would
+    be a leftover that reopens a page the analyst already left.
+    """
+    params = {"page": PAGE_SLUGS.get(mode, PAGE_SLUGS[DEFAULT_PAGE])}
+    if mode == "Case" and case is not None:
+        params["case"] = f"C-{int(case):04d}"
+    return params
+
+
+def page_from_params(params: dict) -> tuple[str, int | None]:
+    """The page a query string asks for, and the case it names, if any.
+
+    Falls back to the live feed: a stale or hand-edited URL must never open a
+    page that does not exist. A case page without a case number becomes the
+    list instead, which is the page it would have been reached from.
+    """
+    mode = MODE_BY_SLUG.get(str(params.get("page", "") or "").lower(), DEFAULT_PAGE)
+    found = re.fullmatch(r"C-(\d+)", str(params.get("case", "") or "").strip().upper())
+    case = int(found.group(1)) if found else None
+    if mode == "Case" and case is None:
+        mode = "Cases"
+    return mode, case
+
+
+def remember_page(mode: str, case: int | None = None) -> None:
+    """Write the visible page into the URL -- only when it changed.
+
+    Writing on every run would push the query string (and, in some versions, a
+    rerun) on each repaint; the comparison keeps it silent.
+    """
+    wanted = page_params(mode, case)
+    if dict(st.query_params) == wanted:
+        return
+    for key in list(st.query_params):
+        if key not in wanted:
+            del st.query_params[key]
+    for key, value in wanted.items():
+        if st.query_params.get(key) != value:
+            st.query_params[key] = value
+
+
+def restore_page() -> tuple[str, int | None]:
+    """The page the URL asks for. Read once, when the session has no mode yet."""
+    return page_from_params(dict(st.query_params))
 
 
 def render_costs_popover() -> CostConfig:

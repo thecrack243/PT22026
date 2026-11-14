@@ -153,7 +153,7 @@ python run_local.py
 
 The app needs a trained run, so run the training command in section 4 first. Model files are not stored in the repository. `results/replay_sample.csv.gz` is, so the replay mode has data to work with as soon as the models exist.
 
-The three modes are buttons in the left sidebar (the active one is highlighted); each mode keeps its own settings when you move between them. Switching modes fades the new page in and scrolls it to the top, while a running live feed keeps repainting without restarting the animation.
+The three modes are buttons in the left sidebar (the active one is highlighted); each mode keeps its own settings when you move between them. Switching modes fades the new page in and scrolls it to the top, while a running live feed keeps repainting without restarting the animation. The visible page is mirrored into the URL (`?page=cases`, `?page=case&case=C-0007`), so reloading the tab — or opening the link again — lands on the page you were on instead of the live feed; a link to a case that no longer exists falls back to the list.
 
 ### 7.1 Historical replay
 

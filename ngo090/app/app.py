@@ -41,8 +41,7 @@ CASE = "Case"                       # one case, opened from the list or from an 
 AUDIT = "Audit"                     # the decision log: workspace too
 APPROVALS = "Approvals"             # the assistant's queue: workspace too
 MODES = (LIVE, REPLAY, TESTING)    # the live feed is what greets the analyst
-SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases", CASE: "case",
-        AUDIT: "audit", APPROVALS: "approvals"}
+SLUG = common.PAGE_SLUGS           # the same slug the URL uses, so the two cannot drift
 ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":material/science:",
         CASES: ":material/folder_shared:", CASE: ":material/description:",
         AUDIT: ":material/receipt_long:", APPROVALS: ":material/fact_check:"}
@@ -66,7 +65,11 @@ def _switch_to(mode: str) -> None:
 
 def render_sidebar(store) -> str:
     """The three modes live in the sidebar; the page itself stays one canvas."""
-    st.session_state.setdefault("mode", MODES[0])
+    if "mode" not in st.session_state:              # a fresh session: first visit or a reload
+        mode, case = common.restore_page()          # the URL remembers where the analyst was
+        st.session_state.mode = mode
+        if case is not None:
+            st.session_state["selected_case"] = case
     with st.sidebar:
         st.markdown(ui.sidebar_brand(), unsafe_allow_html=True)
         st.markdown('<div class="fa-root"><div class="fa-side-label">Modes</div></div>',
@@ -150,6 +153,9 @@ def main() -> None:
     header = st.empty()                             # each mode fills in its own header
     store = common.get_case_store(str(common.cases_path()))
     mode = render_sidebar(store)
+    number = st.session_state.get("selected_case")
+    if mode == CASE and (number is None or store.get(number) is None):
+        mode = st.session_state.mode = CASES        # a stale case link lands on the list
     if mode != REPLAY:
         st.session_state["playing"] = False         # a replay does not keep running in the background
 
@@ -174,6 +180,10 @@ def main() -> None:
             mode_agent.render(header, store)
         else:
             mode_testing.render(header, tag, run, engine)
+
+    # The page just drawn becomes the one the URL names, so a reload -- or a
+    # bookmark, or a fresh tab on the same link -- opens it again.
+    common.remember_page(mode, st.session_state.get("selected_case"))
 
 
 main()
