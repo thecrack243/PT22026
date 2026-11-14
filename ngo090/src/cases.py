@@ -42,8 +42,8 @@ CREATE TABLE IF NOT EXISTS cases (
     risk        REAL    NOT NULL,
     decision    TEXT    NOT NULL,
     explanation TEXT    NOT NULL DEFAULT '',
-    status      TEXT    NOT NULL DEFAULT 'investigating',
-    closed      INTEGER NOT NULL DEFAULT 0,
+    status      TEXT    NOT NULL DEFAULT 'investigating',  -- the resolution, not the state
+    closed      INTEGER NOT NULL DEFAULT 0,                -- the state: 1 = closed
     notes       TEXT    NOT NULL DEFAULT '',
     priority    TEXT    NOT NULL DEFAULT 'medium',
     source      TEXT    NOT NULL DEFAULT 'live',

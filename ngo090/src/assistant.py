@@ -276,6 +276,16 @@ class Reply:
 
 
 _TOPICS = (
+    # "What is the difference between status and resolution?" comes first: a
+    # question about the words is not a question about the case, and the field
+    # names below would otherwise capture it.
+    ("vocabulary", ("difference between", "what does resolution", "what does status",
+                    "meaning of", "what is a resolution", "what is resolution",
+                    "what is priority", "what is a state", "status vs", "resolution vs")),
+    # The verdict on its own, ahead of "should i ..." in `recommend`: "should I
+    # change the resolution?" is a question about the resolution, and reading
+    # it as a general recommendation answered about priority instead.
+    ("resolution", ("resolution", "verdict", "outcome")),
     ("recommend", ("recommend", "should i", "what should", "next step", "advice", "advise",
                    "suggest", "what do you think", "your call", "worth escalating", "would you",
                    "do you think i should")),
@@ -518,7 +528,7 @@ class RiskPilot:
     def _answer(self, case: Case, question: str) -> Reply:
         topic = _topic(question)
         needs_investigation = topic in ("", "recommend", "judge", "how", "why", "related",
-                                        "policy", "risk", "transaction", "status")
+                                        "policy", "risk", "transaction", "status", "resolution")
         investigation = None
         if needs_investigation:
             try:
@@ -528,6 +538,10 @@ class RiskPilot:
 
         if topic == "recommend":
             text = self._recommend_text(case, investigation, question)
+        elif topic == "resolution":
+            text = self._resolution_text(case, investigation, question)
+        elif topic == "vocabulary":
+            text = self._vocabulary_text(case)
         elif topic == "judge":
             text = self._judge_text(case, investigation)
         elif topic == "how":
@@ -775,16 +789,65 @@ class RiskPilot:
         return f"The last {len(events)}: {lines}."
 
     def _status_text(self, case: Case) -> str:
+        """Where the case stands: state, resolution and priority, one word each.
+
+        The three fields are orthogonal, so the answer names all three instead
+        of letting "status" stand for whichever one the reader had in mind.
+        """
+        priority = case.priority_label.lower()
         if case.closed:
-            return (f"Closed as {case.status_label.lower()}, {case.priority_label.lower()} priority. "
-                    f"Last change {_when(case.updated_at)}.")
-        if str(case.created_at) == str(case.updated_at):
-            return (f"Still open -- resolution {case.status_label.lower()}, "
-                    f"{case.priority_label.lower()} priority. Opened {_when(case.created_at)}, and "
-                    f"nothing has touched it since.")
-        return (f"Still open -- resolution {case.status_label.lower()}, "
-                f"{case.priority_label.lower()} priority. Opened {_when(case.created_at)}, last "
-                f"change {_when(case.updated_at)}.")
+            verdict = ("without a verdict" if case.status == "investigating"
+                       else f"as {case.status_label.lower()}")
+            return (f"Closed {verdict}. {_capital(priority)} priority, last change "
+                    f"{_when(case.updated_at)}.")
+        if case.status == "investigating":
+            text = f"Open, still investigating -- no verdict yet. {_capital(priority)} priority"
+            if str(case.created_at) == str(case.updated_at):
+                return text + f", and nothing has touched it since it opened {_when(case.created_at)}."
+            return text + f", last change {_when(case.updated_at)}."
+        return (f"Open, with the resolution already set to {case.status_label.lower()} -- it isn't "
+                f"closed yet. {_capital(priority)} priority, last change {_when(case.updated_at)}.")
+
+    def _resolution_text(self, case: Case, investigation, question: str = "") -> str:
+        """The verdict field on its own: what it says, and whether to change it."""
+        if case.status == "investigating":
+            text = ("The resolution is still investigating -- no verdict recorded. It becomes "
+                    "false positive or confirmed fraud when you decide, and it's separate from "
+                    "the case's state (open or closed) and from its priority.")
+        else:
+            text = f"The resolution says {case.status_label.lower()}."
+
+        asks = bool(re.search(r"should i|change|update|set it|different|right call",
+                              _core(question)))
+        if not asks:
+            return text
+        rec = investigation.recommendation if investigation is not None else None
+        if rec is None:
+            return text + " I can't tell you whether to change it without the transaction's balances."
+        if rec.kind == "close_false_positive":
+            return (text + " On this evidence I'd set it to false positive and close -- say \"mark "
+                           "it false positive\" and I'll put it up for approval.")
+        if rec.kind == "close_fraud":
+            return (text + " On this evidence I'd set it to confirmed fraud -- say \"mark it "
+                           "confirmed fraud\" and I'll put it up for approval.")
+        if case.status != "investigating":
+            # A verdict is already on record: recommending "investigating" would
+            # read as if the case had none.
+            return (text + " I wouldn't change it: nothing in the evidence argues for a different "
+                           "verdict than the one on record.")
+        return (text + " I wouldn't set one yet: nothing in the evidence supports either verdict, "
+                       "so investigating is the honest answer.")
+
+    def _vocabulary_text(self, case: Case) -> str:
+        """The three fields, in the words the rest of the app now uses."""
+        return ("Three separate things, and they move independently. State -- open or closed: "
+                "whether you're still working the case; here it's "
+                f"{case.state_label.lower()}. Resolution -- investigating, confirmed fraud or "
+                "false positive: the verdict on the transaction; here it's "
+                f"{case.status_label.lower()}. Priority -- low, medium, high or urgent: how hard "
+                "to work it; here it's " + case.priority_label.lower() + ". The system's own "
+                "decision (approved, sent to review, blocked) is a fourth field, and nobody edits "
+                "it.")
 
     @staticmethod
     def _boundary(case: Case) -> str:

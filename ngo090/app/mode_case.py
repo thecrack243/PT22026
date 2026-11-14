@@ -54,13 +54,19 @@ def _token(case) -> str:
 # Editing the case
 # --------------------------------------------------------------------------- #
 def _editor(case, tools: Toolkit) -> None:
-    """Resolution, priority and notes, with the same rules as everywhere else."""
+    """Resolution, priority and notes, with the same rules as everywhere else.
+
+    The verdict is labelled "Resolution" here, never "Status": on this page
+    "state" is open/closed and "resolution" is the verdict, and one word per
+    concept is the only way the two do not get confused.
+    """
     token = _token(case)
-    status = st.selectbox("Status", STATUSES, index=STATUSES.index(case.status),
-                          format_func=lambda s: STATUS_LABELS[s],
-                          key=f"case_page_status_{case.number}_{token}",
-                          help="Investigating while you work; Confirmed fraud or False "
-                               "positive once you decided.")
+    resolution = st.selectbox("Resolution", STATUSES, index=STATUSES.index(case.status),
+                              format_func=lambda s: STATUS_LABELS[s],
+                              key=f"case_page_status_{case.number}_{token}",
+                              help="Investigating while you work; Confirmed fraud or False "
+                                   "positive once you decided. Separate from the case's state "
+                                   "(open or closed) and from its priority.")
 
     with st.form(f"case_page_form_{case.number}_{token}"):
         priority = st.selectbox("Priority", PRIORITIES, index=PRIORITIES.index(case.priority),
@@ -76,12 +82,12 @@ def _editor(case, tools: Toolkit) -> None:
             # Closing records the decision: with the resolution still
             # "Investigating" there is nothing to close the case with.
             saved_closed = buttons[1].form_submit_button("Save and close", type="primary",
-                                                         disabled=status == "investigating")
+                                                         disabled=resolution == "investigating")
 
     if saved or saved_closed:
         try:
             updated = tools.update_case(
-                case.case_id, status=status, notes=notes, priority=priority,
+                case.case_id, status=resolution, notes=notes, priority=priority,
                 state="closed" if saved_closed and not case.closed else None).case
         except ToolError as exc:                          # the store's vocabulary changed
             st.error(str(exc))

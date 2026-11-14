@@ -168,10 +168,47 @@ def test_why_is_answered_from_the_case_record_not_invented(world):
 def test_status_and_notes_come_from_the_case(world):
     world.tools.update_case(world.case.case_id, note="Called the customer, they confirmed")
     status = world.pilot.converse(world.case.case_id, "what is the status?").text
-    assert "open" in status and "investigating" in status and "high priority" in status
+    assert "open" in status.lower() and "investigating" in status
+    assert world.case.priority_label.lower() in status.lower()
 
     notes = world.pilot.converse(world.case.case_id, "what are the notes?").text
     assert "Called the customer" in notes
+
+
+def test_status_names_the_three_fields_one_word_each(world):
+    # "Status" used to stand for whichever of state / resolution / priority the
+    # reader had in mind; the answer now names all three.
+    text = world.pilot.converse(world.case.case_id, "what is the status?").text
+    assert text.startswith("Open")
+    assert "no verdict yet" in text
+    assert "priority" in text
+
+
+def test_a_question_about_the_resolution_is_not_read_as_a_recommendation(world):
+    # Regression: "should i change it?" matched the "recommend" topic first, so
+    # a question about the resolution was answered with a rant about priority.
+    text = world.pilot.converse(
+        world.case.case_id, "What about the resolution? should i change it ?").text
+    assert "resolution" in text.lower()
+    assert "escalating" not in text
+
+
+def test_it_can_explain_its_own_vocabulary(world):
+    text = world.pilot.converse(
+        world.case.case_id, "what is the difference between status and resolution?").text
+    assert "open or closed" in text
+    assert "verdict" in text
+    assert "low, medium, high or urgent" in text
+
+
+def test_a_verdict_on_record_is_not_talked_back_to_investigating(tmp_path):
+    # Regression: a case already marked confirmed fraud got "investigating is
+    # the honest answer" -- it read as if no verdict had been recorded.
+    w = World(tmp_path, status="confirmed_fraud")
+    text = w.pilot._resolution_text(w.case, FakeInvestigation(kind="keep_open"),
+                                    "should i change it?")
+    assert "confirmed fraud" in text
+    assert "investigating is the honest answer" not in text
 
 
 def test_history_lists_the_real_events(world):

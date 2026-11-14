@@ -35,11 +35,15 @@ def _clear_filters() -> None:
 def render_filters() -> tuple[str, str, str, str]:
     cols = st.columns([1.05, 0.75, 0.95, 2.0, 0.75], gap="medium", vertical_alignment="bottom")
     with cols[0]:
-        status = st.selectbox("Status", (ALL, *STATUSES),
+        # The verdict, not the state: "Resolution" here, "State" next to it is
+        # open/closed. The widget key keeps its old name so a session's filter
+        # survives the relabel.
+        status = st.selectbox("Resolution", (ALL, *STATUSES),
                               format_func=lambda s: s if s == ALL else STATUS_LABELS[s],
                               key="case_status")
     with cols[1]:
-        state = st.selectbox("State", (ALL, *STATES), key="case_state")
+        state = st.selectbox("State", (ALL, *STATES), key="case_state",
+                             help="Whether the case is still open or already closed.")
     with cols[2]:
         priority = st.selectbox("Priority", (ALL, *PRIORITIES),
                                 format_func=lambda p: p if p == ALL else PRIORITY_LABELS[p],
