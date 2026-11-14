@@ -250,28 +250,24 @@ def _chat(case, tools: Toolkit, pilot) -> None:
 # --------------------------------------------------------------------------- #
 # The history, on demand
 # --------------------------------------------------------------------------- #
-def open_history(case, events) -> None:
-    """The case's audit trail in a pop-up, so the page keeps its room for work.
+def _history_panel(case, events) -> None:
+    """The case's audit trail inside the History popover.
 
-    It used to be a panel of its own at the bottom of the page, which made the
-    page long for something an analyst reads occasionally. A dialog reads better
-    and is one click away from the heading.
+    A popover reads like a menu: it opens beside the button instead of taking
+    the middle of the page, which suits something read occasionally. The page
+    keeps its room for the work.
     """
-    @st.dialog("Investigation history", width="large")
-    def _show() -> None:
-        count = len(events)
-        st.markdown(
-            f'<div class="fa-root"><div class="fa-psub" style="margin:-6px 0 14px">'
-            f'{ui.escape(case.case_id)} &middot; {count} '
-            f'{"event" if count == 1 else "events"} &middot; newest first</div></div>',
-            unsafe_allow_html=True)
-        if events:
-            st.markdown(ui.case_history_html(events), unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="fa-note">Nothing recorded yet: no edit has touched '
-                        'this case since it was opened.</div>', unsafe_allow_html=True)
-
-    _show()
+    count = len(events)
+    st.markdown(
+        f'<div class="fa-root"><div class="fa-psub" style="margin:-4px 0 12px">'
+        f'{ui.escape(case.case_id)} &middot; {count} '
+        f'{"event" if count == 1 else "events"} &middot; newest first</div></div>',
+        unsafe_allow_html=True)
+    if events:
+        st.markdown(ui.case_history_html(events), unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="fa-note">Nothing recorded yet: no edit has touched '
+                    'this case since it was opened.</div>', unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -294,6 +290,8 @@ def render(header, store, tag: str = "") -> None:
     events = store.events(case.number)
 
     # Heading: back, the case, then the status pill and its history beside it.
+    # The pill is a disabled button so the pair sits in one native row: a
+    # popover cannot live in a mixed HTML/widget horizontal container.
     nav = st.columns([0.17, 0.55, 0.28], vertical_alignment="center")
     if nav[0].button("All cases", key="case_back", icon=":material/arrow_back:"):
         _back()
@@ -302,16 +300,18 @@ def render(header, store, tag: str = "") -> None:
         "case", f"transaction #{int(case.txn_id)} · {case.tx_type.replace('_', ' ').lower() or 'unknown'} · "
                 f"{case.priority_label.lower()} priority", f"Case {case.case_id}", pill=False),
         unsafe_allow_html=True)
-    opened = False
     with nav[2]:
         with st.container(horizontal=True, horizontal_alignment="right",
-                          vertical_alignment="center", gap="small"):
-            st.markdown(ui.status_pill_html("Case file"), unsafe_allow_html=True)
-            opened = st.button(f"History · {len(events)}" if events else "History",
-                               key="case_history", icon=":material/history:",
-                               help="Everything that happened to this case: who changed what, and when.")
-    if opened:
-        open_history(case, events)
+                          vertical_alignment="center", gap="small",
+                          key="case_head_tools"):
+            st.button("Case file", key="case_file_pill", icon=":material/label:",
+                      disabled=True, width="content",
+                      help="The case record is stored on disk.")
+            with st.popover(f"History · {len(events)}" if events else "History",
+                            icon=":material/history:", key="case_history",
+                            width="content", help="Everything that happened to this "
+                            "case: who changed what, and when."):
+                _history_panel(case, events)
 
     left, right = st.columns([1.55, 1], gap="medium")
     with left:

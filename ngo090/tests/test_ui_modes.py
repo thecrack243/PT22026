@@ -5,6 +5,7 @@ results/ and models/, so they are slow and skipped when no trained run exists.
 Marked `slow`: run `pytest -m "not slow"` for the fast suite only.
 """
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from streamlit.testing.v1 import AppTest
 from src.artifacts import discover_runs, load_engine
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "app"))           # ui is an app/ module, importable here
+import ui  # noqa: E402
 RUNS = discover_runs(ROOT)
 pytestmark = [
     pytest.mark.slow,
@@ -268,15 +271,10 @@ def test_the_case_lifecycle_on_the_case_page(tmp_path, monkeypatch):
     reopened = store.get(case.case_id)
     assert not reopened.closed and reopened.status == "confirmed_fraud"
 
-    # The audit trail is one click away beside the status pill, not a panel of
-    # its own: open -> status -> close -> reopen.
-    history = [b for b in at.button if b.key == "case_history"][0]
-    assert history.label.startswith("History")
-    history.click().run()
-    assert not at.exception
-    dialogs = at.get("dialog")
-    assert len(dialogs) == 1, "History opens the trail in a pop-up"
-    trail = "".join(m.value for m in dialogs[0].markdown)
+    # The audit trail is one click away beside the status pill, in a popover:
+    # open -> status -> close -> reopen. AppTest cannot see popovers, so the
+    # trail content is asserted through the renderer the popover feeds.
+    trail = ui.case_history_html(store.events(case.case_id))
     assert "Opened from alert #77" in trail
     assert "Status: Investigating -&gt; Confirmed fraud" in trail
     assert "Case closed" in trail and "Case reopened" in trail
