@@ -1,4 +1,4 @@
-"""Risk decision layer for the Fraud Audit Console.
+"""Risk decision layer for FRAUDINTEL.
 
 The models (see train/train.py) only produce a fraud SCORE per transaction.
 This module turns scores into ACTIONS and measures what those actions would

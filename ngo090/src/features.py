@@ -1,4 +1,4 @@
-"""Shared data loading and feature engineering for the Fraud Audit Console.
+"""Shared data loading and feature engineering for FRAUDINTEL.
 
 This module is imported by BOTH train.py and the Streamlit app, so features are
 computed identically at training time and at scoring time (no training/serving

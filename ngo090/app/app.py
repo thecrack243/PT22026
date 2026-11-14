@@ -1,4 +1,4 @@
-"""Fraud Audit Console: risk monitoring, simulation and testing around one risk engine.
+"""FRAUDINTEL: risk monitoring, simulation and testing around one risk engine.
 
 Run from the project root (the folder that contains app/, src/ and models/):
 
@@ -46,7 +46,7 @@ ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":mat
         CASES: ":material/folder_shared:", CASE: ":material/description:",
         AUDIT: ":material/receipt_long:", APPROVALS: ":material/fact_check:"}
 
-st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout="wide",
+st.set_page_config(page_title="FRAUDINTEL", page_icon="🛡️", layout="wide",
                    initial_sidebar_state="expanded")
 
 

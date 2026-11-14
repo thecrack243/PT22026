@@ -148,7 +148,7 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{gap:.32rem !imp
 .fa-side-logo{width:38px;height:38px;border-radius:12px;display:flex;align-items:center;justify-content:center;
 background:linear-gradient(145deg,rgba(59,130,246,.38),rgba(14,165,233,.10));border:1px solid rgba(96,165,250,.45);
 box-shadow:0 0 18px rgba(59,130,246,.30);}
-.fa-side-name{font-size:15.5px;font-weight:700;letter-spacing:-.2px;line-height:1.15;}
+.fa-side-name{font-size:14.5px;font-weight:700;letter-spacing:.06em;line-height:1.15;}
 .fa-side-sub{font-size:10.5px;color:#8fa3c2;letter-spacing:.13em;text-transform:uppercase;margin-top:3px;}
 .fa-side-label{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#7f93b3;font-weight:700;
 margin:4px 0 18px;padding-left:9px;}
@@ -584,7 +584,7 @@ def sidebar_brand() -> str:
     return compact(
         f'<div class="fa-root"><div class="fa-side-brand">'
         f'<div class="fa-side-logo">{icon("shield-check", "#7db8ff", 21)}</div>'
-        f'<div><div class="fa-side-name">Fraud Audit</div>'
+        f'<div><div class="fa-side-name">FRAUDINTEL</div>'
         f'<div class="fa-side-sub">Risk Monitor</div></div></div></div>')
 
 

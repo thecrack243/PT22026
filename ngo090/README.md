@@ -1,4 +1,4 @@
-# Fraud Audit Console
+# FRAUDINTEL
 
 A fraud detection and risk-decision platform for mobile-money transactions. Three detectors (logistic regression, XGBoost, isolation forest) are combined into one 0–100 risk score by a risk engine; a deterministic policy turns that score into **approve**, **send to review** or **block** under a review-capacity and cost budget.
 
