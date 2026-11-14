@@ -27,6 +27,7 @@ import streamlit as st             # noqa: E402
 
 import mode_agent                   # noqa: E402
 import mode_audit                  # noqa: E402
+import mode_case                   # noqa: E402
 import mode_cases                  # noqa: E402
 import mode_live                   # noqa: E402
 import mode_replay                 # noqa: E402
@@ -35,15 +36,16 @@ import ui                          # noqa: E402
 from src.artifacts import discover_runs  # noqa: E402
 
 REPLAY, LIVE, TESTING = "Historical replay", "Live simulation", "Transaction testing"
-CASES = "Cases"                     # the workspace page, not a simulation mode
+CASES = "Cases"                     # the list of cases: a workspace page, not a mode
+CASE = "Case"                       # one case, opened from the list or from an alert
 AUDIT = "Audit"                     # the decision log: workspace too
 APPROVALS = "Approvals"             # the assistant's queue: workspace too
 MODES = (LIVE, REPLAY, TESTING)    # the live feed is what greets the analyst
-SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases", AUDIT: "audit",
-        APPROVALS: "approvals"}
+SLUG = {LIVE: "live", REPLAY: "replay", TESTING: "testing", CASES: "cases", CASE: "case",
+        AUDIT: "audit", APPROVALS: "approvals"}
 ICON = {LIVE: ":material/sensors:", REPLAY: ":material/history:", TESTING: ":material/science:",
-        CASES: ":material/folder_shared:", AUDIT: ":material/receipt_long:",
-        APPROVALS: ":material/fact_check:"}
+        CASES: ":material/folder_shared:", CASE: ":material/description:",
+        AUDIT: ":material/receipt_long:", APPROVALS: ":material/fact_check:"}
 
 st.set_page_config(page_title="Fraud Audit Console", page_icon="🛡️", layout="wide",
                    initial_sidebar_state="expanded")
@@ -53,11 +55,13 @@ def _switch_to(mode: str) -> None:
     """Runs before the page is drawn, so the sidebar and the page agree in one pass.
 
     Pop-ups belong to the page they were opened on: leaving the page dismisses
-    them, so they do not reappear when the analyst comes back later.
+    them, so they do not reappear when the analyst comes back later. The same
+    goes for the open case: leaving the workspace forgets which case it was.
     """
     st.session_state.mode = mode
-    st.session_state["case_to_open"] = None      # investigation-case pop-up
     st.session_state["alert_to_open"] = None     # live alert pop-up (and its pending trigger)
+    if mode != CASE:
+        st.session_state["selected_case"] = None
 
 
 def render_sidebar(store) -> str:
@@ -76,8 +80,9 @@ def render_sidebar(store) -> str:
                     unsafe_allow_html=True)
         open_n = store.counts()["open"]             # not-closed cases: what can still be worked on
         label = f"Cases · {open_n}" if open_n else CASES
+        # The case page is a subpage of Cases, so Cases stays highlighted there.
         st.button(label, key=f"nav_{SLUG[CASES]}", icon=ICON[CASES], width="stretch",
-                  type="primary" if st.session_state.mode == CASES else "secondary",
+                  type="primary" if st.session_state.mode in (CASES, CASE) else "secondary",
                   on_click=_switch_to, args=(CASES,),
                   help="Alerts an analyst kept, stored in a local SQLite database.")
         st.button(AUDIT, key=f"nav_{SLUG[AUDIT]}", icon=ICON[AUDIT], width="stretch",
@@ -161,6 +166,8 @@ def main() -> None:
             mode_live.render(header, tag, run, engine)
         elif mode == CASES:
             mode_cases.render(header, store, tag)
+        elif mode == CASE:
+            mode_case.render(header, store, tag)
         elif mode == AUDIT:
             mode_audit.render(header, store)
         elif mode == APPROVALS:

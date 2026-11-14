@@ -239,6 +239,33 @@ background:rgba(255,255,255,.035);border:1px solid rgba(96,140,220,.18);margin-b
 .fa-gaps{margin-top:12px;padding:11px 13px;border-radius:12px;background:rgba(245,158,11,.08);
 border:1px solid rgba(245,158,11,.3);font-size:12.8px;color:#fde68a;line-height:1.5;}
 .fa-gaps b{color:#fcd34d;}
+.fa-tag.priority{background:rgba(139,92,246,.16);color:#c4b5fd;border:1px solid rgba(139,92,246,.4);}
+.fa-tag.reopen{background:rgba(59,130,246,.14);color:#93c5fd;border:1px solid rgba(59,130,246,.34);}
+/* ---- RiskPilot: the conversation with the assistant ---- */
+.fa-chat-head{display:flex;align-items:center;gap:11px;margin:0 0 4px;}
+.fa-chat-logo{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+background:linear-gradient(145deg,rgba(59,130,246,.34),rgba(14,165,233,.10));border:1px solid rgba(96,165,250,.45);}
+.fa-chat-title{font-size:15.5px;font-weight:700;line-height:1.15;}
+.fa-chat-sub{font-size:11.5px;color:#8fa3c2;margin-top:2px;}
+.fa-chat-row{display:flex;gap:9px;align-items:flex-start;margin:0 0 12px;}
+.fa-chat-row.me{justify-content:flex-end;}
+.fa-chat-avatar{width:26px;height:26px;border-radius:9px;flex:0 0 auto;display:flex;align-items:center;
+justify-content:center;background:rgba(59,130,246,.18);border:1px solid rgba(96,165,250,.4);margin-top:1px;}
+.fa-chat-body{min-width:0;max-width:88%;}
+.fa-chat-name{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:#8fa3c2;
+font-weight:700;margin:0 0 4px 2px;}
+.fa-chat-name small{font-weight:500;letter-spacing:0;text-transform:none;margin-left:7px;opacity:.75;}
+.fa-chat-bubble{font-size:13.8px;line-height:1.55;color:#dbe6f8;background:rgba(23,38,68,.85);
+border:1px solid rgba(96,140,220,.22);border-radius:4px 14px 14px 14px;padding:9px 12px;}
+.fa-chat-bubble.me{background:linear-gradient(135deg,rgba(37,99,235,.55),rgba(14,165,233,.30));
+border-color:rgba(96,165,250,.45);border-radius:14px 4px 14px 14px;color:#f2f7ff;margin-left:auto;}
+.fa-chat-sys{text-align:center;font-size:11.8px;color:#8fa3c2;padding:2px 0 10px;letter-spacing:.02em;}
+.fa-chat-intro{font-size:13px;color:#9db0cf;line-height:1.6;padding:2px 2px 6px;}
+.fa-chat-intro b{color:#dbe6f8;}
+/* the transcript is its own scroll window: the page never grows with the chat */
+div[class*="st-key-chat_scroll"]{padding:14px 16px 4px !important;}
+div[class*="st-key-chat_scroll"]::-webkit-scrollbar{width:9px;}
+div[class*="st-key-chat_scroll"]::-webkit-scrollbar-thumb{background:rgba(120,160,220,.32);border-radius:8px;}
 </style>
 """
 
@@ -527,6 +554,7 @@ def header_html(state: str, period: str, title: str) -> str:
                   "stopped": ("Stopped", "idle"), "finished": ("Replay finished", "done"),
                   "testing": ("Ready to test", "live"), "live": ("Simulated live", "live"),
                   "cases": ("Stored on disk", "done"), "audit": ("Append-only", "done"),
+                  "case": ("Case file", "done"),
                   "approvals": ("Human in the loop", "idle")}[state]
     return compact(
         f'<div class="fa-root"><div class="fa-head"><div>'
@@ -982,8 +1010,12 @@ _STATUS_DOT = {"investigating": "#fbbf24", "confirmed_fraud": "#fb7185",
                "false_positive": "#4ade80", "closed": "#94a3b8"}
 
 
-def case_detail_html(case) -> str:
-    """Everything known about a case, above the editable fields in the pop-up."""
+def case_detail_html(case, head: bool = True) -> str:
+    """Everything known about a case, above the editable fields.
+
+    `head=False` drops the title and badges, for the case page, where the page
+    header already carries them.
+    """
     facts = [("Case", case.case_id), ("Transaction", f"#{int(case.txn_id)}"),
              ("Amount", f"{case.amount:,.2f}" if case.amount else "-"),
              ("Type", (case.tx_type or "-").replace("_", " ").title()),
@@ -992,11 +1024,13 @@ def case_detail_html(case) -> str:
     kv = "".join(f"<div><span>{k}</span><b>{escape(str(v))}</b></div>" for k, v in facts)
     explanation = escape(case.explanation) if case.explanation else "No explanation was recorded."
     notes = escape(case.notes).replace("\n", "<br>") if case.notes else "No notes yet."
+    title = (f'<div class="fa-detail-head"><h3>{case.case_id} &middot; transaction #{int(case.txn_id)}</h3>'
+             f'<div class="fa-pills" style="gap:8px"><span class="fa-tag {"closed" if case.closed else "open"}">{case.state_label}</span>'
+             f'<span class="fa-tag {case.status}">{_STATUS_LABEL[case.status]}</span>'
+             f'<span class="fa-tag prio-{case.priority}">{_PRIORITY_LABEL[case.priority]} priority</span></div></div>'
+             if head else "")
     return compact(
-        f'<div class="fa-root"><div class="fa-detail-head"><h3>{case.case_id} &middot; transaction #{int(case.txn_id)}</h3>'
-        f'<div class="fa-pills" style="gap:8px"><span class="fa-tag {"closed" if case.closed else "open"}">{case.state_label}</span>'
-        f'<span class="fa-tag {case.status}">{_STATUS_LABEL[case.status]}</span>'
-        f'<span class="fa-tag prio-{case.priority}">{_PRIORITY_LABEL[case.priority]} priority</span></div></div>'
+        f'<div class="fa-root">{title}'
         f'<div class="fa-klabel">Risk score</div>'
         f'<div class="fa-risk-big" style="font-size:38px">{case.risk:.1f}<small> / 100</small></div>'
         f'<div class="fa-riskbar"><span class="pt" style="left:{min(case.risk, 100):.1f}%"></span></div>'
@@ -1093,3 +1127,41 @@ def proposal_card_html(proposal, show_case: bool = True) -> str:
         f'<div style="font-size:13.4px;color:#dbe6f8;line-height:1.5">{why}</div>'
         f'<div class="fa-note" style="margin-top:8px">{changes}</div>'
         f'{override}</div></div>')
+
+
+# --------------------------------------------------------------------------- #
+# RiskPilot: the conversation view (src/chat.py, src/assistant.py)
+# --------------------------------------------------------------------------- #
+def chat_head_html(name: str) -> str:
+    """Who the analyst is talking to, and what that assistant is allowed to do."""
+    return compact(
+        f'<div class="fa-root"><div class="fa-chat-head">'
+        f'<div class="fa-chat-logo">{icon("shield-check", "#7db8ff", 18)}</div>'
+        f'<div><div class="fa-chat-title">{escape(name)}</div>'
+        f'<div class="fa-chat-sub">Investigation assistant &middot; recommends, never decides</div>'
+        f'</div></div></div>')
+
+
+def chat_intro_html(case_id: str) -> str:
+    """The first thing on an empty transcript: what this thing is for."""
+    return compact(
+        f'<div class="fa-root"><div class="fa-chat-intro">I have read <b>{escape(case_id)}</b>. '
+        f'Ask me why it was flagged, what the policy decided, what looks related, or what the '
+        f'notes say. I can add to the notes, and prepare a change for you to approve.</div></div>')
+
+
+def chat_message_html(message, name: str = "RiskPilot") -> str:
+    """One turn as a bubble: the analyst on the right, the assistant on the left."""
+    body = escape(message.text or "").replace("\n", "<br>")
+    stamp = _stamp(message.created_at)
+    if message.role == "system":
+        return compact(f'<div class="fa-root"><div class="fa-chat-sys">{body}</div></div>')
+    if message.role == "analyst":
+        return compact(f'<div class="fa-root"><div class="fa-chat-row me">'
+                       f'<div class="fa-chat-bubble me">{body}</div></div></div>')
+    return compact(
+        f'<div class="fa-root"><div class="fa-chat-row">'
+        f'<div class="fa-chat-avatar">{icon("shield-check", "#7db8ff", 14)}</div>'
+        f'<div class="fa-chat-body"><div class="fa-chat-name">{escape(name)}'
+        f'<small>{stamp}</small></div>'
+        f'<div class="fa-chat-bubble">{body}</div></div></div></div>')

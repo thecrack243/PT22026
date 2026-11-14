@@ -16,7 +16,9 @@ import streamlit as st  # noqa: E402
 
 from src.artifacts import load_engine, load_run  # noqa: E402
 from src.audit import AuditLog  # noqa: E402
+from src.assistant import RiskPilot  # noqa: E402
 from src.cases import CaseStore  # noqa: E402
+from src.chat import ChatStore  # noqa: E402
 from src.decision import PRESETS, CostConfig, Policy  # noqa: E402
 from src.agent import InvestigationAgent, LLMWriter  # noqa: E402
 from src.proposals import ProposalStore  # noqa: E402
@@ -26,6 +28,7 @@ MIN_EXPLAIN_RISK = 80.0     # the policy cannot flag anything below this risk (s
 CASES_DB = "FRAUD_CASES_DB"  # environment override, used by tests and for throwaway databases
 AUDIT_DB = "FRAUD_AUDIT_DB"  # same, for the decision log
 PROPOSALS_DB = "FRAUD_PROPOSALS_DB"   # same, for the assistant's recommendations
+CHAT_DB = "FRAUD_CHAT_DB"             # same, for the conversation with the assistant
 
 
 # --------------------------------------------------------------------------- #
@@ -122,6 +125,30 @@ def agent_for(tools: Toolkit) -> InvestigationAgent:
         corpus=None if stream is None else stream.rows,
         lookup=None if stream is None else stream.get,
         writer=LLMWriter() if LLMWriter.available() else None)
+
+
+# --------------------------------------------------------------------------- #
+# The conversation (src/chat.py, src/assistant.py)
+# --------------------------------------------------------------------------- #
+def chat_path() -> Path:
+    """Where the transcripts live: data/chat.db by default."""
+    override = os.environ.get(CHAT_DB)
+    return Path(override) if override else ROOT / "data" / "chat.db"
+
+
+@st.cache_resource(show_spinner=False)
+def get_chat_store(path: str) -> ChatStore:
+    """One transcript store per database file: every case page reads the same one."""
+    return ChatStore(path)
+
+
+def chats() -> ChatStore:
+    return get_chat_store(str(chat_path()))
+
+
+def pilot_for(tools: Toolkit) -> RiskPilot:
+    """RiskPilot wired to this session: same tools, queue and feed as the panel."""
+    return RiskPilot(tools, proposals=proposals(), chat=chats(), agent=agent_for(tools))
 
 
 # --------------------------------------------------------------------------- #

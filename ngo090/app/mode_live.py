@@ -181,13 +181,13 @@ def _prediction(engine, row, policy):
 
 
 def _create_case(txn_id: int, engine, policy: Policy) -> None:
-    """Copy this alert into a durable case and jump straight to it.
+    """Copy this alert into a durable case and jump straight to its page.
 
     Runs in the pop-up body after the button click (not in an on_click
     callback: a callback triggered inside a dialog only reruns the fragment,
-    so the jump to the Cases page would never happen in a real browser).
-    The st.rerun() right after turns this into a full run, where the Cases
-    page opens the new pop-up and the sidebar highlight follows.
+    so the jump would never happen in a real browser). The st.rerun() right
+    after turns this into a full run, where the case page opens and the
+    sidebar highlight follows.
     """
     stream = st.session_state.get("live_stream")
     row = stream.get(txn_id) if stream is not None else None
@@ -195,8 +195,8 @@ def _create_case(txn_id: int, engine, policy: Policy) -> None:
         return
     store = get_case_store(str(cases_path()))
     case = Toolkit(engine, policy=policy, cases=store).create_case(row, source="live").case
-    st.session_state.mode = "Cases"                  # the sidebar highlight follows on this run
-    st.session_state["case_to_open"] = case.number   # the case pop-up opens on the Cases page
+    st.session_state.mode = "Case"                   # the sidebar highlight follows on this run
+    st.session_state["selected_case"] = case.number   # the case page opens on it
     st.session_state["alert_to_open"] = None         # do not re-open this alert pop-up later
     st.rerun()
 
@@ -212,7 +212,13 @@ def case_action(row, engine, policy: Policy) -> None:
     st.markdown('<div class="fa-note" style="margin:14px 0 6px">Investigation</div>', unsafe_allow_html=True)
     if existing is not None:
         st.caption(f"Case {existing.case_id} already exists · {existing.state_label} · "
-                   f"{existing.priority_label} priority. Open it from Cases in the sidebar.")
+                   f"{existing.priority_label} priority.")
+        if st.button(f"Open {existing.case_id}", key=f"open_existing_{int(row.id)}",
+                     width="stretch", icon=":material/open_in_new:"):
+            st.session_state.mode = "Case"
+            st.session_state["selected_case"] = existing.number
+            st.session_state["alert_to_open"] = None
+            st.rerun()
         return
 
     if st.button("Open investigation case", key=f"open_case_{int(row.id)}", width="stretch",

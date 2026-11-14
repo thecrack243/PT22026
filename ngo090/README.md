@@ -242,7 +242,7 @@ Everything the dashboard does is also available as a small, deterministic, Strea
 
 Inputs are forgiving: a transaction may be a dict, a pandas `Series` or a DataFrame row. Results are dataclasses whose `to_dict()` is JSON-safe, so a script, a notebook or a future agent can consume them directly. The same inputs always give the same outputs; only the case functions write, and they write in one SQLite transaction each.
 
-The dashboard calls exactly these functions — the single-transaction form and the alert pop-up call `explain_transaction`, the alert pop-up's "Related transactions" table calls `find_related_transactions`, and case creation and every case edit on the Cases page go through `create_case` / `update_case` — so there is one behaviour, not a UI copy and a tool copy. The same functions also work without Streamlit:
+The dashboard calls exactly these functions — the single-transaction form and the alert pop-up call `explain_transaction`, the alert pop-up's "Related transactions" table calls `find_related_transactions`, and case creation and every case edit on the case page go through `create_case` / `update_case`, as does every approved proposal — so there is one behaviour, not a UI copy and a tool copy. The same functions also work without Streamlit:
 
 ```python
 from src.tools import open_toolkit
@@ -278,6 +278,20 @@ A proposal that would change the case in a way the policy contradicts carries an
 
 An optional language-model writer only rephrases the narrative. It sees nothing but the evidence list, and any reply that introduces a number the evidence does not contain is discarded in favour of the deterministic template — a failed or hallucinating writer degrades to the template wording, recorded as such. The screen shows the narrative, the evidence list and an explicit "what was not checked, and why" section; the full step trace with timings and the tool each fact came from is kept in the data — it rides along with the proposal when one is filed — so the work stays auditable without exposing function names to the analyst.
 
+### 7.10 The case page, and RiskPilot in conversation
+
+A case used to open in a pop-up. It now has its own page (`app/mode_case.py`): the alert's "Open investigation case" button lands there, every case card in the list opens it, and the page carries everything the pop-up did — the facts, the risk bar, the editable fields, the investigation history — plus the two things an investigation deserves more room for: the assistant's evidence panel and **RiskPilot**, the assistant in conversation (`src/assistant.py`).
+
+RiskPilot is the same read-only assistant with a mouth. The analyst can ask why a case was flagged, what the risk and policy decision are, what related transactions exist, or what the notes and history say — every answer is assembled deterministically from the tool layer, grounded in the case record, and it says so when the live row is missing and it cannot re-score. The analyst can also ask for a change: "mark it false positive", "close as confirmed fraud", "set priority to urgent", "reopen the case", or "add this to the note: …".
+
+The boundary is the same as everywhere else, in three tiers:
+
+1. **Notes** are the one thing it writes directly — additive, attributed ("Note added via RiskPilot: …"), unable to move a status.
+2. **Everything else** — resolutions, closing, reopening, priority — becomes a proposal in the same append-only queue, shown as a card in the chat with Approve / Reject beside it. Approving applies it through `update_case`, exactly like the Approvals page; the change lands in the case's history with who asked and who approved.
+3. **Anything it did not understand** comes back as a question with the list of what it can do. The grammar is a fixed, tested parser, so "why did you mark it false positive?" is answered, never executed.
+
+The intent parser refuses to guess by design: closing without a resolution asks which one, a change the case already satisfies is answered rather than filed, a close that contradicts the Risk Manager's decision says so in the reply, and the transcript keeps both halves of every turn — including failed ones — in an append-only store per case (`src/chat.db`, same SQLite conventions). The conversation is part of the case file, which is exactly why the assistant can afford to be useful: it never needs to be trusted, only read.
+
 ## 8. Tests
 
 ```bash
@@ -285,9 +299,9 @@ pytest                 # everything, about 30 s
 pytest -m "not slow"   # the fast suite only, about 15 s
 ```
 
-The fast suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift statistics, feature engineering, the processing and validation path, invalid-input handling, generator reproducibility, live-stream state, scoring consistency between the single-transaction and batch paths, the tool layer (`tests/test_tools.py`: Streamlit-free importing, deterministic scoring, scoring parity with the dashboard, JSON-safe results, case idempotency), the proposal queue (`tests/test_proposals.py`: supersede, decide-once, override gating) and the assistant (`tests/test_agent.py`: rule behaviour, evidence provenance, read-only guarantee, the number guard on the optional writer, approval through the tool layer). It builds its own small engine from synthetic data, so it needs neither the PaySim CSV nor the trained model files.
+The fast suite covers the decision layer (actions, capacity budget, money arithmetic, advisor), drift statistics, feature engineering, the processing and validation path, invalid-input handling, generator reproducibility, live-stream state, scoring consistency between the single-transaction and batch paths, the tool layer (`tests/test_tools.py`: Streamlit-free importing, deterministic scoring, scoring parity with the dashboard, JSON-safe results, case idempotency), the proposal queue (`tests/test_proposals.py`: supersede, decide-once, override gating), the assistant (`tests/test_agent.py`: rule behaviour, evidence provenance, read-only guarantee, the number guard on the optional writer, approval through the tool layer), RiskPilot's grammar and boundaries (`tests/test_assistant.py`: commands vs questions, notes as the only direct write, proposals for everything else, clarify-don't-guess, per-case isolation) and the transcript store (`tests/test_chat.py`: append-only, per-case, action round-trip). It builds its own small engine from synthetic data, so it needs neither the PaySim CSV nor the trained model files.
 
-Tests marked `slow` are integration tests that need more: the end-to-end app tests (`tests/test_ui_modes.py`) load the real trained engine and drive mode switching, alert selection and session-state upgrades headlessly, plus the training smoke test and the long drift-monitor run. They are skipped automatically when no trained run exists.
+Tests marked `slow` are integration tests that need more: the end-to-end app tests (`tests/test_ui_modes.py`) load the real trained engine and drive mode switching, the case page lifecycle, the assistant loop (run -> file -> approve), and a full RiskPilot conversation (question answered, change proposed, applied only after the approval click) headlessly, plus the training smoke test and the long drift-monitor run. They are skipped automatically when no trained run exists.
 
 ## 9. Limitations
 
@@ -298,7 +312,7 @@ Tests marked `slow` are integration tests that need more: the end-to-end app tes
 - **Two decision semantics.** Replay recomputes decisions from the current policy (a backtest); live freezes each decision when the transaction arrives (an operational log). Both are correct for their mode, but the same transaction can show different actions in the two modes.
 - **Limited tuning.** The models use fixed, lightly chosen hyperparameters. The goal is a fair comparison, not the highest possible score.
 - **Isolation Forest** is unsupervised and generally weaker than supervised models on known fraud patterns; its value is in catching unusual behaviour that labels do not cover.
-- **No persistence.** The live stream, the review queue and all decisions live in the browser session. Closing the tab loses them, and nothing is written to a database. Investigation cases, analyst notes, audit trails and approval workflows are not implemented yet.
+- **No persistence for the feed.** The live stream, the review queue and all decisions live in the browser session. Closing the tab loses them (the decision log aside, which is written as it happens). Investigation cases, notes, proposals and the RiskPilot transcripts *are* persisted; the conversation's answers about related activity still need the live feed, so on a cold start the assistant says what it could not re-check instead of inventing balances.
 
 ## 10. Project structure
 
@@ -313,7 +327,8 @@ ngo090/
 │   ├── mode_replay.py        # mode 1: historical replay
 │   ├── mode_live.py          # mode 2: live simulation
 │   ├── mode_testing.py       # mode 3: transaction testing
-│   ├── mode_cases.py         # workspace: investigation cases
+│   ├── mode_cases.py         # workspace: the list of investigation cases
+│   ├── mode_case.py          # workspace: one case, with RiskPilot beside it
 │   ├── mode_audit.py         # workspace: the decision log
 │   ├── mode_agent.py         # workspace: the assistant's approval queue
 │   └── ui.py                 # HTML/CSS/SVG builders for the dashboards
@@ -327,6 +342,8 @@ ngo090/
 │   ├── explain.py            # occlusion-based reasons
 │   ├── tools.py              # the tool layer: score / assess / explain / related / cases
 │   ├── agent.py              # the read-only investigation assistant and its rules
+│   ├── assistant.py          # RiskPilot: the chat grammar, answers and boundaries
+│   ├── chat.py               # the per-case, append-only conversation transcript (SQLite)
 │   ├── proposals.py          # the append-only proposal queue (human approval) (SQLite)
 │   ├── cases.py              # investigation cases and their history (SQLite)
 │   ├── audit.py              # the append-only decision log (SQLite)

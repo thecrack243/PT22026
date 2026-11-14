@@ -37,7 +37,10 @@ def test_create_is_pending_and_keeps_its_evidence(queue):
 def test_unknown_kind_is_refused(queue):
     with pytest.raises(ValueError):
         queue.create("C-0001", "do_something_else")
-    assert set(KINDS) == {"escalate", "close_fraud", "close_false_positive", "keep_open"}
+    # `priority` and `reopen` exist because the chat records what the analyst
+    # asked for the same way the rules record what they recommend.
+    assert set(KINDS) == {"escalate", "close_fraud", "close_false_positive", "keep_open",
+                          "priority", "reopen"}
 
 
 def test_a_second_proposal_supersedes_the_first(queue):

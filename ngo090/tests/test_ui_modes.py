@@ -190,8 +190,43 @@ def test_the_cases_page_clear_button_resets_the_filters(tmp_path, monkeypatch):
     assert listed(at)                                          # the case is back
 
 
-def test_the_case_lifecycle_from_the_pop_up(tmp_path, monkeypatch):
-    """Open -> Save and close -> Reopen, driven through the real pop-up form.
+def _by_prefix(widgets, prefix):
+    """The one widget whose key starts with a prefix (keys carry a freshness token)."""
+    for widget in widgets:
+        key = getattr(widget, "key", None)
+        if key and key.startswith(prefix):
+            return widget
+    return None
+
+
+def test_opening_a_case_from_the_list_goes_to_its_page(tmp_path, monkeypatch):
+    """A card is a link now: the case has a page, not a pop-up."""
+    from src.cases import CaseStore
+
+    monkeypatch.setenv("FRAUD_CASES_DB", str(tmp_path / "cases.db"))
+    store = CaseStore(tmp_path / "cases.db")
+    case = store.create(txn_id=88, risk=93.0, decision="review", amount=1500.0,
+                        tx_type="CASH_OUT", source="test", explanation="a test case")
+
+    at = page(mode="Cases")
+    assert not at.exception
+    at.button(key=f"case_row_{case.number}").click().run()
+    assert not at.exception
+    assert at.session_state["mode"] == "Case"
+    assert at.session_state["selected_case"] == case.number
+    assert len(at.get("dialog")) == 0                      # no pop-up any more
+    assert f"Case {case.case_id}" in all_text(at)
+    assert "RiskPilot" in all_text(at)
+
+    at.button(key="case_back").click().run()
+    assert not at.exception
+    assert at.session_state["mode"] == "Cases"
+    assert at.session_state["selected_case"] is None
+    assert "Investigation cases" in all_text(at)
+
+
+def test_the_case_lifecycle_on_the_case_page(tmp_path, monkeypatch):
+    """Open -> Save and close -> Reopen, driven through the real widgets.
 
     Regression for the form gotcha: a selectbox inside an st.form only hands
     its value over on submit, so the Status picker lives outside the form —
@@ -205,41 +240,36 @@ def test_the_case_lifecycle_from_the_pop_up(tmp_path, monkeypatch):
     case = store.create(txn_id=77, risk=95.0, decision="block", amount=900.0,
                         tx_type="TRANSFER", source="test", explanation="lifecycle test")
 
-    at = page(mode="Cases")
+    at = page(mode="Case", selected_case=case.number)
     assert not at.exception
-    at.button(key=f"case_row_{case.number}").click().run()
-    assert not at.exception
-    assert len(at.get("dialog")) == 1
+    status = _by_prefix(at.selectbox, f"case_page_status_{case.number}")
+    assert status.value == "investigating"
 
-    dlg = at.get("dialog")[0]
-    # Freshly opened: investigating, so closing is not possible yet.
-    assert dlg.selectbox(key=f"case_popup_status_{case.number}").value == "investigating"
-    assert dlg.button[1].disabled            # Save and close
+    save_close = [b for b in at.button if b.label == "Save and close"][0]
+    assert save_close.disabled            # nothing to close it with yet
 
     # Picking a resolution arms the close button; the status picker must be
     # outside the form for this to work (values land before the submit rerun).
-    dlg.selectbox(key=f"case_popup_status_{case.number}").select("confirmed_fraud").run()
-    dlg = at.get("dialog")[0]
-    assert not dlg.button[1].disabled
+    status.select("confirmed_fraud").run()
+    assert not at.exception
+    save_close = [b for b in at.button if b.label == "Save and close"][0]
+    assert not save_close.disabled
 
-    dlg.button[1].click().run()              # Save and close
+    save_close.click().run()              # Save and close
     assert not at.exception
     saved = store.get(case.case_id)
     assert saved.closed and saved.status == "confirmed_fraud"
 
-    # The reopened pop-up shows the closed state and offers Reopen case.
-    assert len(at.get("dialog")) == 1
-    dlg = at.get("dialog")[0]
-    reopen = [b for b in dlg.button if b.label == "Reopen case"]
+    # The page now shows the closed state and offers Reopen case.
+    reopen = [b for b in at.button if b.label == "Reopen case"]
     assert reopen, "a closed case offers Reopen case"
     reopen[0].click().run()
     assert not at.exception
     reopened = store.get(case.case_id)
     assert not reopened.closed and reopened.status == "confirmed_fraud"
 
-    # The pop-up also carries the audit trail, rendered beside the case (right
-    # column, always visible): open -> status -> close -> reopen.
-    trail = "".join(m.value for m in at.get("dialog")[0].markdown)
+    # The audit trail is on the page too: open -> status -> close -> reopen.
+    trail = "".join(m.value for m in at.markdown)
     assert "Investigation history" in trail
     assert "Opened from alert #77" in trail
     assert "Status: Investigating -&gt; Confirmed fraud" in trail
@@ -273,7 +303,7 @@ def test_the_approvals_page_starts_empty(tmp_path, monkeypatch):
     assert "investigation assistant" in all_text(at)
 
 
-def test_the_assistant_runs_from_the_case_pop_up_and_waits_for_approval(tmp_path, monkeypatch):
+def test_the_assistant_runs_from_the_case_page_and_waits_for_approval(tmp_path, monkeypatch):
     """The whole loop through the real widgets: run, file, approve, case moves.
 
     The point of the test is the last assertion: the case is unchanged by the
@@ -288,6 +318,7 @@ def test_the_assistant_runs_from_the_case_pop_up_and_waits_for_approval(tmp_path
     proposals_db = tmp_path / "proposals.db"
     monkeypatch.setenv("FRAUD_CASES_DB", str(cases_db))
     monkeypatch.setenv("FRAUD_PROPOSALS_DB", str(proposals_db))
+    monkeypatch.setenv("FRAUD_CHAT_DB", str(tmp_path / "chat.db"))
 
     stream = LiveStream(_engine(), seed=7, now=0.0, settings=LiveSettings(300, 0.03, False, 2.0, False))
     stream.advance(Policy(), now=30.0)
@@ -303,13 +334,11 @@ def test_the_assistant_runs_from_the_case_pop_up_and_waits_for_approval(tmp_path
                         amount=float(row.amount), tx_type=str(row.type), source="live",
                         priority="low", explanation="assistant flow")
 
-    at = page(mode="Cases", live_stream=stream)
-    assert not at.exception
-    _find_button(at, f"case_row_{case.number}").click().run()
+    at = page(mode="Case", selected_case=case.number, live_stream=stream)
     assert not at.exception
 
     run = _find_button(at, f"run_agent_{case.number}")
-    assert run is not None, "the pop-up offers the assistant"
+    assert run is not None, "the page offers the assistant"
     run.click().run()
     assert not at.exception
 
@@ -372,3 +401,73 @@ def test_rejecting_a_proposal_leaves_the_case_untouched(tmp_path, monkeypatch):
 
     assert store.get(case.case_id) == case           # nothing happened to the case
     assert ProposalStore(proposals_db).get(proposal.number).status == "rejected"
+
+
+# --------------------------------------------------------------------------- #
+# RiskPilot: the conversation on the case page (src/assistant.py, src/chat.py)
+# --------------------------------------------------------------------------- #
+def test_the_chat_answers_and_applies_only_after_approval(tmp_path, monkeypatch):
+    """One question, one request, one approval -- driven through the chat box."""
+    from src.cases import CaseStore
+    from src.chat import ChatStore
+    from src.proposals import ProposalStore
+
+    cases_db = tmp_path / "cases.db"
+    proposals_db = tmp_path / "proposals.db"
+    monkeypatch.setenv("FRAUD_CASES_DB", str(cases_db))
+    monkeypatch.setenv("FRAUD_PROPOSALS_DB", str(proposals_db))
+    monkeypatch.setenv("FRAUD_CHAT_DB", str(tmp_path / "chat.db"))
+
+    store = CaseStore(cases_db)
+    case = store.create(txn_id=986, risk=95.1, decision="review", amount=477_066.97,
+                        tx_type="CASH_OUT", source="live",
+                        explanation="Receiver balance - Receiver balance 0 (typical 558,465)")
+
+    at = page(mode="Case", selected_case=case.number)
+    assert not at.exception
+    assert "RiskPilot" in all_text(at)
+    assert "I have read" in all_text(at)            # the intro, before any turn
+
+    at.chat_input(key=f"chat_input_{case.number}").set_value("Why was it flagged?").run()
+    assert not at.exception
+    body = all_text(at)
+    assert "Why was it flagged?" in body            # the analyst's turn is on screen
+    assert "opened at risk 95.1" in body            # grounded in the case, not invented
+    assert ChatStore(tmp_path / "chat.db").count(case.case_id) == 2
+
+    at.chat_input(key=f"chat_input_{case.number}").set_value("mark it as false positive").run()
+    assert not at.exception
+    assert store.get(case.case_id).status == "investigating"      # a request, not a change
+    proposal = ProposalStore(proposals_db).pending()[0]
+    assert proposal.kind == "close_false_positive"
+
+    _find_button(at, f"chat_approve_{proposal.number}").click().run()
+    assert not at.exception
+    moved = store.get(case.case_id)
+    assert moved.status == "false_positive" and moved.closed
+
+    transcript = ChatStore(tmp_path / "chat.db").history(case.case_id)
+    assert transcript[-1].role == "system"
+    assert "Approved" in transcript[-1].text and "false positive" in transcript[-1].text
+    assert "Proposal" in all_text(at)               # the card now shows the verdict
+
+
+def test_a_quick_prompt_starts_the_conversation(tmp_path, monkeypatch):
+    """The three chips on an empty transcript are real turns, not decoration."""
+    from src.cases import CaseStore
+    from src.chat import ChatStore
+
+    monkeypatch.setenv("FRAUD_CASES_DB", str(tmp_path / "cases.db"))
+    monkeypatch.setenv("FRAUD_PROPOSALS_DB", str(tmp_path / "proposals.db"))
+    monkeypatch.setenv("FRAUD_CHAT_DB", str(tmp_path / "chat.db"))
+    store = CaseStore(tmp_path / "cases.db")
+    case = store.create(txn_id=12, risk=96.0, decision="review", amount=10_000.0,
+                        tx_type="TRANSFER", source="test", priority="low")
+
+    at = page(mode="Case", selected_case=case.number)
+    chips = [b for b in at.button if b.key and b.key.startswith("chat_chip_")]
+    assert len(chips) == 3
+    chips[2].click().run()                          # "What do you recommend?"
+    assert not at.exception
+    assert "recommendation" in all_text(at).lower()
+    assert ChatStore(tmp_path / "chat.db").count(case.case_id) == 2
