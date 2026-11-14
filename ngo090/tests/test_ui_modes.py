@@ -473,5 +473,7 @@ def test_a_quick_prompt_starts_the_conversation(tmp_path, monkeypatch):
     assert len(chips) == 3
     chips[2].click().run()                          # "What do you recommend?"
     assert not at.exception
-    assert "recommendation" in all_text(at).lower()
+    body = all_text(at).lower()
+    assert "make it urgent" in body                 # a position, in the first line
+    assert "approval" in body                       # and the way to act on it
     assert ChatStore(tmp_path / "chat.db").count(case.case_id) == 2

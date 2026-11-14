@@ -54,7 +54,11 @@ def world(tmp_path):
     ("escalate", "priority", "urgent"),
     ("reopen the case", "reopen", ""),
     ("help", "help", ""),
-    ("hello", "help", ""),
+    ("what can you do?", "help", ""),
+    ("hello", "greeting", ""),
+    ("hi", "greeting", ""),
+    ("thanks", "ack", ""),
+    ("thank you for that", "ack", ""),
 ])
 def test_commands_are_read_as_commands(message, kind, detail):
     intent = parse(message)
@@ -86,20 +90,33 @@ def test_the_assistant_has_a_name_and_is_not_a_decision_maker():
     assert ASSISTANT_NAME == "RiskPilot"
 
 
-def test_a_greeting_says_what_it_can_do_and_where_the_line_is(world):
+def test_a_greeting_is_a_greeting_not_a_manual(world):
+    """The failure this guards against: a leaflet in reply to "hello"."""
     reply = world.pilot.converse(world.case.case_id, "hello")
-    assert "RiskPilot" in reply.text
     assert world.case.case_id in reply.text
-    assert "approve" in reply.text.lower()
+    assert len(reply.text) < 220, "a greeting is a line, not a capabilities dump"
     assert world.chat.count(world.case.case_id) == 2       # the question and the answer
+
+
+def test_help_is_the_one_turn_that_lists_what_it_can_do(world):
+    for message in ("help", "what can you do?"):
+        text = world.pilot.converse(world.case.case_id, message).text
+        assert "RiskPilot" in text
+        assert "approval" in text.lower() or "approve" in text.lower()
+
+
+def test_thanks_does_not_earn_a_capability_list(world):
+    text = world.pilot.converse(world.case.case_id, "thanks").text
+    assert "Anytime" in text
+    assert len(text) < 120
 
 
 def test_why_is_answered_from_the_case_record_not_invented(world):
     text = world.pilot.converse(world.case.case_id, "why was it flagged?").text
     assert "95.1" in text
-    assert "sends it to review" in text
-    assert "Receiver balance" in text                       # the explanation stored on the case
-    assert "could not re-score" in text                     # no live feed here: says so
+    assert "The note that came with it" in text             # the explanation stored on the case
+    assert "receiver balance" in text.lower()               # the explanation stored on the case
+    assert "can't re-score" in text                         # no live feed here: says so
 
 
 def test_status_and_notes_come_from_the_case(world):
@@ -244,3 +261,78 @@ def test_the_rule_set_is_still_what_recommends(world):
     """The chat understands requests; it does not replace the rules."""
     world.pilot.converse(world.case.case_id, "what do you recommend?")
     assert AGENT_TAG.startswith("rules:")
+
+
+# --------------------------------------------------------------------------- #
+# The voice: an opinion first, prose a person would use
+# --------------------------------------------------------------------------- #
+class FakeInvestigation:
+    """The shape InvestigationAgent.investigate returns, built by hand.
+
+    The point of these tests is the wording, so the evidence is a stub: what
+    matters is that the sentence is built from facts and opens with a position.
+    """
+
+    def __init__(self, kind="escalate", priority="urgent", risk=99.2, decision="review",
+                 override=False):
+        from types import SimpleNamespace as N
+
+        self.risk = risk
+        self.policy_decision = decision
+        self.evidence = [N(source="live feed")]
+        self.explanation = N(
+            reasons_up=[N(text="Amount 1,258,316 (typical 171,704)"),
+                        N(text="Receiver balance 0 (typical 558,465)")],
+            reasons_down=[N(text="Receiving account was empty")])
+        self.related = None
+        self.gaps = ()
+        self.assessment = N(rule="risk 99.2 is at or above the review threshold")
+        self.recommendation = N(kind=kind, rule="R3", proposed_priority=priority,
+                                requires_override=override, label=kind,
+                                rationale="risk is high")
+
+
+def speaking(world, **kwargs):
+    """A world whose investigation returns a known recommendation."""
+    world.pilot.agent.investigate = lambda case_id: FakeInvestigation(**kwargs)
+    return world
+
+
+def test_the_recommendation_opens_with_the_position(world):
+    text = speaking(world).pilot.converse(world.case.case_id, "what do you recommend?").text
+    assert text.lower().startswith("i'd make it urgent"), text
+    assert "rule r" not in text.lower(), "no rule codes in a recommendation"
+    assert "99.2" in text
+
+
+def test_a_close_question_gets_a_yes_or_no_before_the_reasoning(world):
+    text = speaking(world).pilot.converse(world.case.case_id, "should I close it?").text
+    assert text.startswith("Not yet."), text
+    assert "I'd make it urgent" in text, "then the advice behind the no"
+
+
+def test_a_false_positive_recommendation_says_yes_to_closing(world):
+    text = speaking(world, kind="close_false_positive").pilot.converse(
+        world.case.case_id, "should I close this?").text
+    assert text.startswith("Yes, I would."), text
+    assert "false positive" in text
+
+
+def test_the_rule_number_is_there_for_whoever_asks_for_it(world):
+    """Auditability without putting rule codes in every answer."""
+    text = speaking(world).pilot.converse(world.case.case_id, "how did you decide?").text
+    assert "R3 fired" in text
+
+
+def test_figures_are_spoken_not_pasted_from_the_database(world):
+    text = speaking(world).pilot.converse(world.case.case_id, "why was it flagged?").text
+    assert "1.26M" in text and "1,258,316" not in text
+    assert "172k" in text
+    assert "Two things pushed it there" in text
+    assert "The counterweight" in text
+
+
+def test_a_question_it_cannot_place_gets_a_short_answer_and_a_next_step(world):
+    text = speaking(world).pilot.converse(world.case.case_id, "what does it look like?").text
+    assert text.startswith(world.case.case_id)
+    assert "Ask me for the details" in text

@@ -284,6 +284,8 @@ A case used to open in a pop-up. It now has its own page (`app/mode_case.py`): t
 
 RiskPilot is the same read-only assistant with a mouth. The analyst can ask why a case was flagged, what the risk and policy decision are, what related transactions exist, or what the notes and history say — every answer is assembled deterministically from the tool layer, grounded in the case record, and it says so when the live row is missing and it cannot re-score. The analyst can also ask for a change: "mark it false positive", "close as confirmed fraud", "set priority to urgent", "reopen the case", or "add this to the note: …".
 
+The voice is written for a person, not a log reader: the answer leads with the position ("I'd make it urgent"), the reason follows in spoken figures ("amount 1.26M where 172k is typical"), and the way to act comes last ("Say \\"make it urgent\\" and I'll put it up for approval"). Rule codes never appear in an answer — they are one "how did you decide?" away, which is where an audit trail belongs. A question about closing gets the yes or no first ("Not yet."), then the reasoning; social turns ("hi", "thanks") get one line, because a capabilities leaflet in reply to "thanks" is how an assistant stops feeling like a colleague. None of this involves a model: the sentences branch on the evidence, so the same case always produces the same words.
+
 The boundary is the same as everywhere else, in three tiers:
 
 1. **Notes** are the one thing it writes directly — additive, attributed ("Note added via RiskPilot: …"), unable to move a status.

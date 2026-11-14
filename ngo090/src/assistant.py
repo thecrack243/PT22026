@@ -28,8 +28,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from src.agent import InvestigationAgent
-from src.cases import Case, STATUS_LABELS, PRIORITY_LABELS
+from src.agent import CLUSTER_MIN, CLUSTER_RISK, InvestigationAgent
+from src.cases import Case, PRIORITY_LABELS
 from src.chat import ChatStore
 from src.decision import APPROVE, BLOCK, REVIEW
 from src.proposals import Proposal, ProposalStore
@@ -46,11 +46,18 @@ _POLITE = re.compile(r"^(?:please|kindly|can you|could you|would you|will you|he
 MAX_NOTE = 2_000          # a note longer than this is a paste, not a note
 
 CAPABILITIES = (
-    "Ask me why the case was flagged, what the risk and policy decision are, what "
-    "related transactions exist, or what the notes and history say. I can also add "
-    "to the notes, mark it false positive or confirmed fraud, close or reopen it, "
-    "and change its priority -- but a change only lands after you approve it."
+    "I can tell you why it was flagged, what the system decided, what else looks like "
+    "it, and what I would do about it. I can also change the case -- false positive, "
+    "confirmed fraud, close, reopen, priority -- though those wait for your approval. "
+    "Notes I just add."
 )
+
+# Social turns. They are here because a wall of capabilities in reply to "thanks"
+# is the fastest way to make an assistant feel like a form.
+_GREETINGS = ("hi", "hello", "hey", "yo", "good morning", "good afternoon",
+              "good evening", "morning")
+_ACKS = ("thanks", "thank you", "thx", "cheers", "ok", "okay", "got it",
+         "sounds good", "perfect", "great", "nice", "cool", "understood")
 
 
 # --------------------------------------------------------------------------- #
@@ -116,22 +123,30 @@ def parse(message: str) -> Intent:
     """
     raw = " ".join(str(message or "").split()).strip()
     text = _core(raw)
-    if not text:
-        return Intent("unknown", raw=raw)
+    if not text:                                    # nothing but politeness: "hi", "ok then"
+        return Intent("greeting", raw=raw)
 
-    # 1 -- a greeting or a request for help ----------------------------
+    # 1 -- somebody is being polite, not asking about the case -----------
+    # Answered on its own: a capability list in reply to "thanks" is the
+    # fastest way to make an assistant feel like a form.
+    if text in _GREETINGS:
+        return Intent("greeting", raw=raw)
+    if text in _ACKS or re.match(r"^thank(?:s| you)\b", text):
+        return Intent("ack", raw=raw)
+
+    # 2 -- a request for the manual --------------------------------------
     if re.match(r"^(help|commands?|what can you do|how can you help|what do you do)\b", text) \
-            or text in ("hi", "hello", "hey", "?"):
+            or text == "?":
         return Intent("help", raw=raw)
 
-    # 2 -- a note: "add this to the note: ...", "note: ..." --------------
+    # 3 -- a note: "add this to the note: ...", "note: ..." --------------
     if re.match(r"^notes?\s*[:\-]", text) or (
             re.match(r"^(?:add|append|write|put)\b", text) and re.search(r"\bnotes?\b", text)):
         return Intent("note", _note_text(raw), raw)
 
     command = bool(re.match(r"^(?:" + "|".join(_COMMAND_VERBS) + r")\b", text))
 
-    # 3 -- a resolution. Both are stated before the generic "close". -----
+    # 4 -- a resolution. Both are stated before the generic "close". -----
     if command and re.search(r"\bfalse[\s-]?positive\b", text):
         return Intent("close_false_positive", raw=raw)
     if command and re.search(r"\b(?:confirmed\s+)?(?:fraud|fraudulent)\b", text):
@@ -141,22 +156,22 @@ def parse(message: str) -> Intent:
     if re.match(r"^(?:it'?s|this is|that'?s)\s+(?:clearly\s+|confirmed\s+)?fraud", text):
         return Intent("close_fraud", raw=raw)
 
-    # 4 -- "close it", "mark it closed": which resolution? asked later.
+    # 5 -- "close it", "mark it closed": which resolution? asked later.
     if re.match(r"^close\b", text) or re.match(r"^mark\b.*\bas closed\b", text):
         return Intent("close", raw=raw)
 
-    # 5 -- priority ------------------------------------------------------
+    # 6 -- priority ------------------------------------------------------
     priority = re.search(r"\b(urgent|high|medium|low)\b", text)
     if priority and (command or "priority" in text):
         return Intent("priority", priority.group(1), raw)
     if re.match(r"^escalate\b", text):
         return Intent("priority", "urgent", raw)
 
-    # 6 -- reopen --------------------------------------------------------
+    # 7 -- reopen --------------------------------------------------------
     if re.match(r"^reopen\b", text) or re.search(r"\breopen (?:the |this )?case\b", text):
         return Intent("reopen", raw=raw)
 
-    # 7 -- a question, or something outside the grammar ------------------
+    # 8 -- a question, or something outside the grammar ------------------
     if _is_question(text):
         return Intent("question", raw=raw)
     return Intent("unknown", raw=raw)
@@ -179,28 +194,14 @@ class Reply:
         return bool((self.action or {}).get("kind") == "note")
 
 
-def _verb(decision: str) -> str:
-    return {BLOCK: "blocks it", REVIEW: "sends it to review",
-            APPROVE: "approves it"}.get(decision, f'decides "{decision}"')
-
-
-def _money(value: float) -> str:
-    return f"{float(value):,.0f}"
-
-
-def _stamp(value: str) -> str:
-    """A stored UTC timestamp, in the reader's local time."""
-    from datetime import datetime
-
-    try:
-        return datetime.fromisoformat(str(value)).astimezone().strftime("%d %b %Y, %H:%M")
-    except (TypeError, ValueError):
-        return "an unknown time"
-
-
 _TOPICS = (
     ("recommend", ("recommend", "should i", "what should", "next step", "advice", "advise",
-                   "suggest", "what do you think", "your call", "worth escalating")),
+                   "suggest", "what do you think", "your call", "worth escalating", "would you",
+                   "do you think i should")),
+    ("judge", ("is it fraud", "is this fraud", "fraud or not", "legit", "is it real",
+               "should i worry", "how bad", "how serious", "is it safe")),
+    ("how", ("how did you decide", "how do you know", "which rule", "what rule",
+             "how did you get", "walk me through")),
     ("why", ("why", "reason", "flagged", "suspicious", "explain")),
     ("related", ("related", "similar", "cluster", "look-alike", "lookalike",
                  "other transaction", "same account", "linked")),
@@ -235,6 +236,15 @@ def _topic(question: str) -> str:
         if any(word in text for word in words):
             return name
     return ""
+
+
+def _asks_to_close(question: str) -> bool:
+    """Did the analyst ask about closing, rather than just "what should I do"?
+
+    "Should I close it?" wants a yes or a no first; a recommendation that opens
+    with "it's already urgent" answers a different question.
+    """
+    return bool(re.search(r"\b(close|closing|shut|clear)\b", _core(question)))
 
 
 class RiskPilot:
@@ -285,9 +295,8 @@ class RiskPilot:
         case = found.case
         intent = parse(message)
 
-        if intent.kind == "help":
-            return self._say(case, f"I'm {self.name}. I work on {case.case_id} only. "
-                                   f"{CAPABILITIES}", intent)
+        if intent.kind in ("help", "greeting", "ack"):
+            return self._social(case, intent)
         if intent.kind == "note":
             return self._note(case, intent)
         if intent.kind == "close_false_positive":
@@ -405,11 +414,30 @@ class RiskPilot:
              action: dict | None = None) -> Reply:
         return Reply(text, intent.kind, action=action or {"kind": "answer"}, case=case)
 
+    # -- social turns --------------------------------------------------- #
+    def _social(self, case: Case, intent: Intent) -> Reply:
+        """Hello, thanks, and the manual.
+
+        Short on purpose: these are the turns where an assistant most easily
+        sounds like a leaflet, and a paragraph of capabilities in reply to
+        "thanks" is exactly the wrong answer.
+        """
+        if intent.kind == "greeting":
+            kind = (case.tx_type or "").replace("_", " ").lower()
+            return self._say(
+                case,
+                f"Hi. I've read {case.case_id}: {kind} of {_amount(case.amount)} at risk "
+                f"{case.risk:.1f}, {case.state_label.lower()}. What do you want to know?",
+                intent)
+        if intent.kind == "ack":
+            return self._say(case, "Anytime. Say the word if you want a change written up.", intent)
+        return self._say(case, f"I'm {self.name}. {CAPABILITIES}", intent)
+
     # -- questions ------------------------------------------------------ #
     def _answer(self, case: Case, question: str) -> Reply:
         topic = _topic(question)
-        needs_investigation = topic in ("recommend", "why", "related", "policy", "risk",
-                                        "transaction", "status")
+        needs_investigation = topic in ("", "recommend", "judge", "how", "why", "related",
+                                        "policy", "risk", "transaction", "status")
         investigation = None
         if needs_investigation:
             try:
@@ -418,7 +446,11 @@ class RiskPilot:
                 investigation = None
 
         if topic == "recommend":
-            text = self._recommend_text(case, investigation)
+            text = self._recommend_text(case, investigation, question)
+        elif topic == "judge":
+            text = self._judge_text(case, investigation)
+        elif topic == "how":
+            text = self._how_text(case, investigation)
         elif topic == "why":
             text = self._why_text(case, investigation)
         elif topic == "related":
@@ -428,9 +460,7 @@ class RiskPilot:
         elif topic == "risk":
             text = self._risk_text(case, investigation)
         elif topic == "notes":
-            text = (f"The notes read: \"{case.notes}\"" if case.notes
-                    else f"There are no notes on {case.case_id} yet. Say \"add this to the "
-                         f"note: ...\" and I'll add one.")
+            text = self._notes_text(case)
         elif topic == "history":
             text = self._history_text(case)
         elif topic == "transaction":
@@ -438,112 +468,340 @@ class RiskPilot:
         elif topic == "status":
             text = self._status_text(case)
         else:
-            text = (f"Here is where {case.case_id} stands: {self._status_text(case)} "
-                    f"Ask me why it was flagged, what is related, or what I recommend.")
+            text = self._summary_text(case, investigation)
         return Reply(text, "question", action={"kind": "answer", "topic": topic}, case=case)
 
     @staticmethod
     def _exact(investigation) -> bool:
         return investigation is not None and any(e.source == "live feed" for e in investigation.evidence)
 
-    def _why_text(self, case: Case, investigation) -> str:
-        decision = investigation.policy_decision if investigation else case.decision
-        parts = [f"{case.case_id} was opened at risk {case.risk:.1f}, and the policy "
-                 f"{_verb(decision)}."]
-        reasons = (investigation.explanation.reasons_up[:3]
-                   if investigation and investigation.explanation else ())
-        if reasons:
-            parts.append("What drove the score: "
-                         + "; ".join(f"{r.label} -- {r.text}" for r in reasons) + ".")
+    # -- the answers, in words a person would use ------------------------ #
+    def _summary_text(self, case: Case, investigation) -> str:
+        """"Where are we?" -- what it is, what stands out, what I'd do."""
+        kind = (case.tx_type or "transaction").replace("_", " ").lower()
+        parts = [f"{case.case_id}: {_article(kind)} {kind} of {_amount(case.amount)} at risk "
+                 f"{case.risk:.1f}, opened {_when(case.created_at)}."]
+        up = ([_fact(r) for r in investigation.explanation.reasons_up[:1]]
+              if investigation is not None and investigation.explanation else [])
+        if up:
+            parts.append(f"What stands out: {_clauses(up)}.")
         elif case.explanation:
-            parts.append(f"The explanation recorded with the case: {case.explanation}.")
-        if investigation and investigation.assessment is not None:
-            parts.append(f"Why the policy decided that: {investigation.assessment.rule}.")
-        if investigation and investigation.gaps and not self._exact(investigation):
-            parts.append("I could not re-score it in this session, so those are the numbers "
-                         "recorded when the case was opened.")
+            parts.append(f"The note on it: {_plain(case.explanation)}.")
+        rec = investigation.recommendation if investigation is not None else None
+        if rec is not None and rec.kind == "escalate":
+            label = PRIORITY_LABELS.get(rec.proposed_priority or "urgent", "Urgent").lower()
+            parts.append(f"I'd make it {label}.")
+        elif rec is not None and rec.kind == "close_false_positive":
+            parts.append("I'd call it a false positive.")
+        elif rec is not None and rec.kind == "close_fraud":
+            parts.append("I'd call it fraud.")
+        else:
+            parts.append(f"I'd leave it at {case.priority_label.lower()}.")
+        parts.append("Ask me for the details, or tell me what to change.")
         return " ".join(parts)
 
+    def _why_text(self, case: Case, investigation) -> str:
+        if investigation is None or investigation.explanation is None:
+            return (f"The case was opened at risk {case.risk:.1f}. The note that came with it: "
+                    f"\"{_plain(case.explanation)}\". I can't re-score it here -- the "
+                    f"transaction's balances aren't in this session -- so that's all I can vouch "
+                    f"for.")
+        risk = investigation.risk
+        up = [_fact(r) for r in investigation.explanation.reasons_up[:3]]
+        down = [_fact(r) for r in investigation.explanation.reasons_down[:1]]
+        text = f"Risk {risk:.1f} out of 100."
+        if up:
+            count = {1: "One thing pushed it there", 2: "Two things pushed it there"}.get(
+                len(up), "Three things pushed it there")
+            text += f" {count}: {_clauses(up)}."
+        if down:
+            text += f" The counterweight: {_clauses(down)}."
+        if not self._exact(investigation):
+            text += (" I couldn't re-score it in this session, so those are the figures recorded "
+                     "when the case was opened.")
+        return text
+
+    def _judge_text(self, case: Case, investigation) -> str:
+        if investigation is None or investigation.explanation is None:
+            return (f"I can't tell you whether it's fraud -- nobody can from one transaction. What "
+                    f"the record says is risk {case.risk:.1f}, decision \"{case.decision}\".")
+        up = [_fact(r) for r in investigation.explanation.reasons_up[:2]]
+        down = [_fact(r) for r in investigation.explanation.reasons_down[:1]]
+        parts = ["Honestly? I can't tell you for certain -- nobody can from one transaction."]
+        if up:
+            parts.append(f"What points at fraud: {_clauses(up)}.")
+        if down:
+            parts.append(f"What points the other way: {_clauses(down)}.")
+        if investigation.recommendation.kind == "close_false_positive":
+            parts.append("On balance I'd clear it.")
+        else:
+            parts.append("So no, I wouldn't clear it on this evidence.")
+        return " ".join(parts)
+
+    def _how_text(self, case: Case, investigation) -> str:
+        """The audit answer, for the one question that asks for the rule."""
+        if investigation is None or investigation.recommendation is None:
+            return ("I work from a fixed list of rules over the evidence, and I can't run it here: "
+                    "the transaction's balances aren't in this session.")
+        rec = investigation.recommendation
+        text = ("I check a fixed list of rules in order and stop at the first that matches. "
+                f"{rec.rule} fired: {rec.rationale}.")
+        if investigation.assessment is not None:
+            text += f" The policy's own rule reads: \"{investigation.assessment.rule}\"."
+        return text
+
     def _risk_text(self, case: Case, investigation) -> str:
-        if investigation and investigation.assessment is not None:
-            return (f"Risk {investigation.risk:.1f} out of 100. The policy "
-                    f"{_verb(investigation.policy_decision)}: {investigation.assessment.rule}.")
-        return (f"The engine could not score the transaction again in this session, so the "
-                f"score recorded when the case was opened stands: {case.risk:.1f} out of 100, "
-                f"decision \"{case.decision}\".")
+        risk = investigation.risk if investigation is not None else case.risk
+        if risk >= 95.0:
+            tail = "That's near the top of the scale -- not a borderline call."
+        elif risk >= 80.0:
+            tail = "High enough that the system hands it to a person instead of clearing it."
+        else:
+            tail = "Low enough that it wouldn't have been flagged on its own."
+        text = f"{risk:.1f} out of 100. {tail}"
+        if investigation is not None and not self._exact(investigation):
+            text += (" That's the score recorded when the case was opened: I couldn't re-score it "
+                     "in this session.")
+        return text
 
     def _policy_text(self, case: Case, investigation) -> str:
-        if investigation and investigation.assessment is not None:
-            policy = investigation.assessment.policy
-            return (f"The policy says \"{investigation.policy_decision}\" for this transaction: "
-                    f"{investigation.assessment.rule} (auto-block at "
-                    f"{policy.get('block_threshold', '-')}, review from "
-                    f"{policy.get('review_min_score', '-')}, capacity "
-                    f"{policy.get('daily_capacity', '-')} a day). The decision belongs to the "
-                    f"policy, not to me.")
-        return (f"The case records the decision \"{case.decision}\" at risk {case.risk:.1f}. I "
-                f"cannot re-run the policy without the transaction's balances, so I will not "
-                f"invent a newer answer.")
+        decision = investigation.policy_decision if investigation is not None else case.decision
+        if investigation is None or investigation.assessment is None:
+            return (f"The case records \"{decision}\" at risk {case.risk:.1f}. I can't re-run the "
+                    f"policy without the transaction's balances, so I won't invent a newer answer.")
+        if decision == BLOCK:
+            return ("It was blocked. At this score the policy stops the transaction on its own, so "
+                    "the money shouldn't have moved. What's left for you is whether the block was "
+                    "the right call.")
+        if decision == REVIEW:
+            return ("It went to review rather than block: at this score the policy hands the "
+                    "decision to a person instead of stopping the card by itself. That's why it's "
+                    "in your queue.")
+        return ("The policy cleared it -- it scored below the level this system acts on. It's only "
+                "here because somebody kept the alert anyway.")
 
     def _related_text(self, case: Case, investigation) -> str:
         if investigation is None or investigation.related is None:
             gap = (investigation.gaps[0] if investigation and investigation.gaps
                    else "the live row for this transaction is not available in this session")
-            return f"I could not search related activity: {gap.rstrip('.')}."
+            first = gap.split(". ")[0].rstrip(".")
+            return (f"I can't check that here: {_first_lower(first)}. Open it from the live feed "
+                    f"and I'll search.")
         found = investigation.related
         if not found.items:
-            return (f"I compared it with {found.examined:,} transactions and none shared enough "
-                    f"evidence to count as related.")
+            return (f"I compared it with {found.examined:,} others and none share enough to count "
+                    f"as related. Nothing to tie it to.")
         lines = []
         for item in found.items[:3]:
-            risk = f", risk {item.risk:.1f}" if item.risk is not None else ""
+            tx = item.transaction
             why = ", ".join(item.relation) if item.relation else "shared evidence"
-            lines.append(f"#{item.transaction['id']} "
-                         f"({item.transaction['type'].replace('_', ' ').lower()} of "
-                         f"{_money(item.transaction['amount'])}{risk}: {why})")
-        return (f"{len(found.items)} related transaction(s) out of {found.examined:,} examined -- "
+            lines.append(f"#{tx['id']} ({tx['type'].replace('_', ' ').lower()} of "
+                         f"{_amount(tx['amount'])} -- {why})")
+        return (f"{len(found.items)} of {found.examined:,} look related: "
                 + "; ".join(lines) + ".")
 
-    def _recommend_text(self, case: Case, investigation) -> str:
-        if investigation is None:
-            return (f"I could not build a recommendation without the transaction's values. The "
-                    f"case as recorded: {case.state_label.lower()}, "
-                    f"{case.status_label.lower()}, {case.priority_label.lower()} priority, "
-                    f"risk {case.risk:.1f}.")
+    def _recommend_text(self, case: Case, investigation, question: str = "") -> str:
+        """The suggestion: the opinion first, then why, then how to act on it."""
+        if investigation is None or investigation.recommendation is None:
+            return (f"I can't give you a real recommendation without the transaction's balances. "
+                    f"All I have is what the case recorded: risk {case.risk:.1f}, "
+                    f"{case.status_label.lower()}, {case.priority_label.lower()} priority. Open it "
+                    f"from the live feed and I'll have more to go on.")
         rec = investigation.recommendation
-        text = f"My recommendation is {rec.label.lower()} (rule {rec.rule}): {rec.rationale}."
-        if rec.changes_anything:
-            text += " Nothing changes until you approve it."
-        if rec.requires_override:
-            text += " It also contradicts the policy's own decision, so approving it takes an " \
-                    "explicit override."
+        risk = investigation.risk
+        decision = investigation.policy_decision
+        cluster = sum(1 for item in (investigation.related.items if investigation.related else ())
+                      if (item.risk or 0.0) >= CLUSTER_RISK)
+
+        if rec.kind == "escalate":
+            label = PRIORITY_LABELS.get(rec.proposed_priority or "urgent", "Urgent").lower()
+            if cluster >= CLUSTER_MIN:
+                reason = (f"{cluster} look-alikes around it also score above "
+                          f"{CLUSTER_RISK:.0f}, and it's still sitting at "
+                          f"{case.priority_label.lower()} priority")
+            else:
+                reason = (f"risk {risk:.1f} is at the top of the scale and it's still sitting at "
+                          f"{case.priority_label.lower()} priority")
+            text = f"I'd make it {label}. {_capital(reason)}."
+            if rec.requires_override:
+                text += (" That does mean going against the system's own call, so it needs an "
+                         "override from you.")
+            else:
+                text += " Nothing moves until you approve it."
+            ask = "make it urgent" if label == "urgent" else f"raise it to {label}"
+            text += f" Say \"{ask}\" and I'll put it up for approval."
+
+        elif rec.kind == "close_false_positive":
+            text = ("I'd call this a false positive. The policy approves the transaction and "
+                    "nothing around it supports the alert.")
+            text += (" Say \"mark it false positive\" and I'll put it up for approval -- nothing "
+                     "moves until you approve it.")
+
+        elif rec.kind == "close_fraud":
+            text = ("I'd call this confirmed fraud. The evidence points one way and nothing in the "
+                    "record argues with it.")
+            text += " Say \"mark it confirmed fraud\" and I'll put it up for approval."
+
+        elif decision == BLOCK:
+            text = (f"Nothing to do here. It's already blocked and "
+                    f"{case.priority_label.lower()} -- I'd leave it and give the time to "
+                    f"something else.")
+
+        elif decision == APPROVE and cluster < CLUSTER_MIN:
+            text = ("Honestly, I can't call this one either way. The policy approves it, but "
+                    "somebody kept the alert, and I don't have enough to close it over their "
+                    "judgement. I'd keep it open for a person to look at.")
+        elif cluster >= CLUSTER_MIN:
+            text = (f"It's already {case.priority_label.lower()}, and with {cluster} look-alikes "
+                    f"around it that's the right slot. I wouldn't file a change.")
+        else:
+            text = (f"It's already {case.priority_label.lower()}. Risk {risk:.1f} is well past the "
+                    f"review line, so escalating wouldn't buy you anything -- I'd leave it where it "
+                    f"is and work it.")
+
+        if _asks_to_close(question):
+            text = ("Yes, I would. " + text if rec.kind == "close_false_positive"
+                    else "Not yet. " + text)
         return text
 
     def _transaction_text(self, case: Case, investigation) -> str:
         if investigation is not None and self._exact(investigation):
             tx = investigation.transaction
-            return (f"Transaction #{tx['id']}: {tx['type'].replace('_', ' ').title()} of "
-                    f"{_money(tx['amount'])} at simulated hour {tx['hour']:02d}:00. Sender balance "
-                    f"{_money(tx['oldbalanceOrg'])}, receiver balance {_money(tx['oldbalanceDest'])}.")
-        return (f"The case records transaction #{case.txn_id}: "
-                f"{(case.tx_type or 'unknown type').replace('_', ' ').title()} of "
-                f"{_money(case.amount)}. The full row is not in this session's feed, so the "
-                f"balances are not something I can vouch for.")
+            return (f"#{tx['id']}: {tx['type'].replace('_', ' ').lower()} of "
+                    f"{_amount(tx['amount'])}, at {tx['hour']:02d}:00. Before it the sender held "
+                    f"{_amount(tx['oldbalanceOrg'])} and the receiver "
+                    f"{_amount(tx['oldbalanceDest'])}.")
+        return (f"The case records #{case.txn_id}: "
+                f"{(case.tx_type or 'unknown type').replace('_', ' ').lower()} of "
+                f"{_amount(case.amount)}. The full row isn't in this session's feed, so I can't "
+                f"tell you the balances.")
+
+    def _notes_text(self, case: Case) -> str:
+        if not case.notes:
+            return ("Nothing in the notes yet. Say \"add this to the note: ...\" and I'll write it "
+                    "down.")
+        notes = " ".join(case.notes.split())
+        if len(notes) > 320:
+            notes = notes[:317].rstrip() + "..."
+        return f"The notes say: \"{notes}\""
 
     def _history_text(self, case: Case) -> str:
         found = self.tools.get_case(case.number)
         events = found.events[:3] if found is not None else ()
         if not events:
-            return f"Nothing has been recorded on {case.case_id} yet."
-        return (f"The last events on {case.case_id}: "
-                + "; ".join(f"{e.detail} ({_stamp(e.created_at)})" for e in events) + ".")
+            return f"Nothing yet -- no edit has touched {case.case_id} since it was opened."
+        lines = "; ".join(f"{e.detail} ({_when(e.created_at)})" for e in events)
+        return f"The last {len(events)}: {lines}."
 
     def _status_text(self, case: Case) -> str:
-        return (f"{case.case_id} is {case.state_label.lower()} with resolution "
-                f"{case.status_label.lower()} and {case.priority_label.lower()} priority. "
-                f"Opened {_stamp(case.created_at)}, last updated {_stamp(case.updated_at)}.")
+        if case.closed:
+            return (f"Closed as {case.status_label.lower()}, {case.priority_label.lower()} priority. "
+                    f"Last change {_when(case.updated_at)}.")
+        if str(case.created_at) == str(case.updated_at):
+            return (f"Still open -- resolution {case.status_label.lower()}, "
+                    f"{case.priority_label.lower()} priority. Opened {_when(case.created_at)}, and "
+                    f"nothing has touched it since.")
+        return (f"Still open -- resolution {case.status_label.lower()}, "
+                f"{case.priority_label.lower()} priority. Opened {_when(case.created_at)}, last "
+                f"change {_when(case.updated_at)}.")
 
     @staticmethod
     def _boundary(case: Case) -> str:
-        return (f"I only work on {case.case_id}, and I would rather ask than guess. "
-                f"{CAPABILITIES}")
+        return (f"I didn't follow that one. Try \"why was it flagged?\", \"what do you "
+                f"recommend?\" or \"mark it false positive\" -- I only work on {case.case_id}.")
+
+
+# --------------------------------------------------------------------------- #
+# Saying it like a person
+# --------------------------------------------------------------------------- #
+def _amount(value) -> str:
+    """A number the way somebody would say it out loud: 477k, not 477,066.97."""
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return "an unknown amount"
+    if abs(number) >= 1_000_000:
+        return f"{number / 1_000_000:.2f}M"
+    if abs(number) >= 10_000:
+        return f"{number / 1_000:.0f}k"
+    return f"{number:,.0f}"
+
+
+def _fact(reason) -> str:
+    """One engine reason as a clause: "amount 1.26M where 172k is typical"."""
+    text = str(getattr(reason, "text", "") or "").strip()
+    found = re.search(r"^(.*?)\s*\(typical ([^)]*)\)\s*$", text)
+    if found:
+        text = f"{found.group(1)} where {found.group(2)} is typical"
+    text = _spoken_numbers(text)
+    if text[:1].isupper() and not text[:2].isupper():     # keep CASH_OUT as it is
+        text = text[:1].lower() + text[1:]
+    return text
+
+
+def _spoken_numbers(text: str) -> str:
+    """1,258,316 -> 1.26M. A figure read aloud is a shorter figure."""
+    return re.sub(r"\b\d{1,3}(?:,\d{3})+\b", lambda m: _amount(m.group(0).replace(",", "")), text)
+
+
+def _clauses(items) -> str:
+    """["a", "b", "c"] -> "a, b and c"."""
+    items = [str(i) for i in items if i]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _capital(text: str) -> str:
+    return text[:1].upper() + text[1:] if text else text
+
+
+def _plain(explanation: str) -> str:
+    """"Transaction amount - Amount 1.26M (typical 172k)" -> "amount 1.26M (typical 172k)".
+
+    The stored explanation is a list of "label - fact" lines; read aloud, the
+    label is noise.
+    """
+    text = " ".join(str(explanation or "").split())
+    if " - " in text:
+        text = text.split(" - ", 1)[1]
+    return _first_lower(_spoken_numbers(text))
+
+
+def _article(word: str) -> str:
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
+def _first_lower(text: str) -> str:
+    """A sentence that has to sit mid-sentence: "The live row..." -> "the live row..."."""
+    if text[:2].isupper():                                # an acronym, leave it
+        return text
+    return text[:1].lower() + text[1:]
+
+
+def _when(value: str) -> str:
+    """A stored UTC timestamp, as "3 hours ago" -- or the date when that is old."""
+    from datetime import datetime, timezone
+
+    try:
+        when = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return "at an unknown time"
+    now = datetime.now(timezone.utc) if when.tzinfo else datetime.now()
+    seconds = (now - when).total_seconds()
+    if seconds < 0:
+        return when.astimezone().strftime("%d %b, %H:%M")
+    if seconds < 90:
+        return "just now"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{int(minutes)} minute{'s' if minutes >= 2 else ''} ago"
+    hours = minutes / 60
+    if hours < 24:
+        return f"{int(hours)} hour{'s' if hours >= 2 else ''} ago"
+    days = hours / 24
+    if days < 7:
+        return f"{int(days)} day{'s' if days >= 2 else ''} ago"
+    return when.astimezone().strftime("%d %b %Y")
