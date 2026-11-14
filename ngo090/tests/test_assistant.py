@@ -84,6 +84,52 @@ def test_a_note_keeps_the_analysts_capitalisation():
 
 
 # --------------------------------------------------------------------------- #
+# Typos. One edit away from a keyword is corrected; nothing cleverer, because
+# a wrong correction files the wrong proposal.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("message, kind, detail", [
+    ("mark it as fals positive", "close_false_positive", ""),
+    ("Mark it as flase positive", "close_false_positive", ""),
+    ("mark it as fraudulant", "close_fraud", ""),
+    ("set priority to urgant", "priority", "urgent"),
+    ("clsoe it", "close", ""),
+    ("mrak it as closed", "close", ""),
+    ("escalte", "priority", "urgent"),
+    ("add to the nots: Called the customer", "note", "Called the customer"),
+])
+def test_a_one_edit_typo_still_lands(message, kind, detail):
+    intent = parse(message)
+    assert (intent.kind, intent.detail) == (kind, detail)
+
+
+def test_a_misspelled_question_still_finds_its_topic():
+    assert parse("is it fradulent?").kind == "question"
+    from src.assistant import _topic
+    assert _topic("is it fradulent?") == "judge"
+    assert _topic("why was it flaged?") == "why"
+
+
+def test_an_ambiguous_word_is_left_alone():
+    from src.assistant import _closest_keyword
+    # "closes" sits one edit from both "close" and "closed" -- no correction.
+    assert _closest_keyword("closes") is None
+    assert parse("mark it as closes").kind == "unknown"
+
+
+def test_common_words_are_never_corrected_into_commands():
+    # "now" is one edit from "low"; correcting it would invent a priority.
+    assert parse("set priority now").kind != "priority" or \
+        parse("set priority now").detail != "low"
+
+
+def test_a_note_is_not_spellchecked():
+    # The analyst's words go in the case record exactly as typed.
+    intent = parse("add to the note: customer says it was fraudulant")
+    assert intent.kind == "note"
+    assert "fraudulant" in intent.detail
+
+
+# --------------------------------------------------------------------------- #
 # What it says
 # --------------------------------------------------------------------------- #
 def test_the_assistant_has_a_name_and_is_not_a_decision_maker():

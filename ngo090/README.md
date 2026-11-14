@@ -286,6 +286,8 @@ RiskPilot is the same read-only assistant with a mouth. The analyst can ask why 
 
 The voice is written for a person, not a log reader: the answer leads with the position ("I'd make it urgent"), the reason follows in spoken figures ("amount 1.26M where 172k is typical"), and the way to act comes last ("Say \\"make it urgent\\" and I'll put it up for approval"). Rule codes never appear in an answer — they are one "how did you decide?" away, which is where an audit trail belongs. A question about closing gets the yes or no first ("Not yet."), then the reasoning; social turns ("hi", "thanks") get one line, because a capabilities leaflet in reply to "thanks" is how an assistant stops feeling like a colleague. None of this involves a model: the sentences branch on the evidence, so the same case always produces the same words.
 
+The grammar tolerates typing, too: a one-edit misspelling of a keyword still lands ("fals positive", "urgant", "clsoe it"). The correction is deliberately narrow — only unambiguous single-edit neighbours of the words the grammar keys on, never short or common words (correcting "now" to "low" would invent a priority), and never the text of a note, which goes into the case record exactly as typed. A wrong correction could file the wrong proposal; a skipped one only asks the analyst to retype.
+
 The boundary is the same as everywhere else, in three tiers:
 
 1. **Notes** are the one thing it writes directly — additive, attributed ("Note added via RiskPilot: …"), unable to move a status.

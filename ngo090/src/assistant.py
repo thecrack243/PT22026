@@ -86,6 +86,74 @@ def _core(message: str) -> str:
     return text.strip(" .!")
 
 
+# The words the grammar keys on. A misspelling of one of these is corrected
+# before matching ("fals positive" -> "false positive"), because an analyst
+# typing fast should not have to retype a command. Short and common words are
+# left out on purpose: correcting "now" to "low" would invent a priority.
+_KEYWORDS = ("false", "positive", "fraud", "fraudulent", "confirmed", "urgent",
+             "high", "medium", "priority", "close", "closed", "reopen",
+             "escalate", "note", "notes", "flagged", "mark")
+
+
+def _edit_distance(a: str, b: str) -> int:
+    """Damerau-Levenshtein distance: counts one typo, including a swap."""
+    if abs(len(a) - len(b)) > 1:
+        return 2
+    prev2 = None
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb))
+            if i > 1 and j > 1 and ca == b[j - 2] and cb == a[i - 2]:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[len(b)]
+
+
+def _closest_keyword(word: str) -> str | None:
+    """The keyword `word` was almost certainly meant to be -- or None.
+
+    Strict on purpose: at most one edit away, and no second keyword at the
+    same distance ("closes" sits one edit from both "close" and "closed", so
+    it stays untouched). The one exception is a singular/plural pair --
+    "nots" is one edit from both "note" and "notes", but the grammar treats
+    them alike, so the tie is harmless and the singular wins. A wrong
+    correction here files the wrong proposal; no correction at worst asks
+    the analyst to retype.
+    """
+    if word in _KEYWORDS or len(word) < 4:
+        return None
+    best, best_d, tied = None, 2, []
+    for candidate in _KEYWORDS:
+        if abs(len(candidate) - len(word)) > 1:
+            continue
+        d = _edit_distance(word, candidate)
+        if d < best_d:
+            best, best_d, tied = candidate, d, [candidate]
+        elif d == best_d:
+            tied.append(candidate)
+    if best is None or best_d != 1:
+        return None
+    if len(tied) == 1:
+        return best
+    shorter, longer = sorted(tied, key=len)
+    if len(tied) == 2 and longer == shorter + "s":
+        return shorter
+    return None
+
+
+def _fix_typos(text: str) -> str:
+    """Correct one-edit misspellings of the keywords, everything else verbatim."""
+    out, last = [], 0
+    for match in re.finditer(r"[a-z]+", text):
+        out.append(text[last:match.start()])
+        out.append(_closest_keyword(match.group(0)) or match.group(0))
+        last = match.end()
+    out.append(text[last:])
+    return "".join(out)
+
+
 def _is_question(text: str) -> bool:
     if text.endswith("?"):
         return True
@@ -101,6 +169,13 @@ def _note_text(raw: str) -> str:
     analyst's capitalisation ("Called the customer, they confirmed the transfer").
     """
     found = re.search(r"\bnotes?\b\s*[:\-\u2014]\s*(?P<text>.*)$", raw, re.IGNORECASE)
+    if found:
+        return found.group("text").strip()
+    # The word "note" itself misspelled ("add to the nots: ..."): the intent
+    # fired on the corrected text, so recover the payload after a separator.
+    # Only with a separator -- a loose match could swallow the wrong words,
+    # and a note is the one place the analyst's text must stay verbatim.
+    found = re.search(r"\bnot[a-z]{0,4}\b\s*[:\-\u2014]\s*(?P<text>.*)$", raw, re.IGNORECASE)
     if found:
         return found.group("text").strip()
     found = re.search(r"\bnotes?\b\s*(?P<text>.*)$", raw, re.IGNORECASE)
@@ -138,6 +213,12 @@ def parse(message: str) -> Intent:
     if re.match(r"^(help|commands?|what can you do|how can you help|what do you do)\b", text) \
             or text == "?":
         return Intent("help", raw=raw)
+
+    # 2b -- spelling. One-edit misspellings of the keywords are corrected so
+    # "fals positive" still lands. The original message stays on the
+    # transcript untouched, and a note's text is read from the raw message
+    # below, so a misspelled word inside a note is never rewritten.
+    text = _fix_typos(text)
 
     # 3 -- a note: "add this to the note: ...", "note: ..." --------------
     if re.match(r"^notes?\s*[:\-]", text) or (
@@ -231,7 +312,7 @@ def _contradicts(decision: str, kind: str) -> bool:
 
 
 def _topic(question: str) -> str:
-    text = _core(question)
+    text = _fix_typos(_core(question))
     for name, words in _TOPICS:
         if any(word in text for word in words):
             return name
@@ -244,7 +325,7 @@ def _asks_to_close(question: str) -> bool:
     "Should I close it?" wants a yes or a no first; a recommendation that opens
     with "it's already urgent" answers a different question.
     """
-    return bool(re.search(r"\b(close|closing|shut|clear)\b", _core(question)))
+    return bool(re.search(r"\b(close|closing|shut|clear)\b", _fix_typos(_core(question))))
 
 
 class RiskPilot:
