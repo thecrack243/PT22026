@@ -182,30 +182,31 @@ def _inline_proposal(proposal, queue, tools: Toolkit, transcript, case) -> None:
     if proposal.requires_override:
         override = st.checkbox("I have read this and want to override the policy",
                                key=f"chat_override_{proposal.number}")
-    left, right = st.columns(2)
-    if left.button("Approve", key=f"chat_approve_{proposal.number}", type="primary",
-                   width="stretch", disabled=proposal.requires_override and not override):
-        try:
-            result = approve(queue, tools, proposal, by="analyst", override=override)
-        except ToolError as exc:
-            st.error(str(exc))
-            return
-        transcript.append(case.number, "system",
-                          f"Approved · {result.case.case_id} is now "
-                          f"{result.case.state_label.lower()}, resolution "
-                          f"{result.case.status_label.lower()}, "
-                          f"{result.case.priority_label.lower()} priority.")
-        st.rerun()
-    if right.button("Reject", key=f"chat_reject_{proposal.number}", width="stretch"):
-        try:
-            reject(queue, proposal, by="analyst")
-        except ToolError as exc:
-            st.error(str(exc))
-            return
-        transcript.append(case.number, "system",
-                          f"Rejected · proposal {proposal.number} dropped, "
-                          f"{case.case_id} unchanged.")
-        st.rerun()
+    with st.container(key="chat_proposal_actions"):
+        left, right = st.columns(2)
+        if left.button("Approve", key=f"chat_approve_{proposal.number}", type="primary",
+                       width="stretch", disabled=proposal.requires_override and not override):
+            try:
+                result = approve(queue, tools, proposal, by="analyst", override=override)
+            except ToolError as exc:
+                st.error(str(exc))
+                return
+            transcript.append(case.number, "system",
+                              f"Approved · {result.case.case_id} is now "
+                              f"{result.case.state_label.lower()}, resolution "
+                              f"{result.case.status_label.lower()}, "
+                              f"{result.case.priority_label.lower()} priority.")
+            st.rerun()
+        if right.button("Reject", key=f"chat_reject_{proposal.number}", width="stretch"):
+            try:
+                reject(queue, proposal, by="analyst")
+            except ToolError as exc:
+                st.error(str(exc))
+                return
+            transcript.append(case.number, "system",
+                              f"Rejected · proposal {proposal.number} dropped, "
+                              f"{case.case_id} unchanged.")
+            st.rerun()
 
 
 def _scroll_chat() -> None:

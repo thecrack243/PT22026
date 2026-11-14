@@ -219,6 +219,9 @@ border:1px solid rgba(139,92,246,.42);}
 .fa-badge.ok{background:rgba(34,197,94,.14);color:#86efac;border-color:rgba(34,197,94,.4);}
 .fa-badge.warn{background:rgba(245,158,11,.14);color:#fcd34d;border-color:rgba(245,158,11,.42);}
 .fa-narr{font-size:14px;line-height:1.62;color:#dbe6f8;margin:0 0 12px;}
+/* Approve/Reject under a chat proposal: breathe after the card, and after
+   the override checkbox when there is one. */
+div[class*="st-key-chat_proposal_actions"]{margin-top:14px;}
 .fa-rec{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 13px;border-radius:12px;
 background:rgba(255,255,255,.035);border:1px solid rgba(96,140,220,.18);margin-bottom:12px;}
 .fa-rec b{font-size:15px;}
