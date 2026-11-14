@@ -338,7 +338,7 @@ def test_approval_applies_through_the_tool_layer(tmp_path):
 
     result = approve(queue, tools, proposal, by="ana", note="same pattern as last week")
     assert result.case.priority == "urgent"
-    assert "Assistant (rules:v1/template)" in result.case.notes
+    assert "Assistant (rules:v2/template)" in result.case.notes
     assert "Approved by ana: same pattern as last week" in result.case.notes
     assert queue.get(proposal.number).status == "approved"
     # and the change is in the case's own history, like any other edit

@@ -51,7 +51,8 @@ from src.proposals import Proposal, ProposalStore
 from src.tools import (Assessment, CaseResult, Explanation, RelatedResult, Toolkit,
                        ToolError, as_transaction)
 
-AGENT_TAG = "rules:v1"                    # bump when _recommend() changes behaviour
+AGENT_TAG = "rules:v2"                    # bump when _recommend() changes behaviour
+                                          # v2: priority rules never propose a change already true
 LLM_URL = "FRAUD_LLM_URL"                 # OpenAI-compatible chat completions endpoint
 LLM_KEY = "FRAUD_LLM_KEY"
 LLM_MODEL = "FRAUD_LLM_MODEL"

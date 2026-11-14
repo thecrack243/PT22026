@@ -342,7 +342,7 @@ def test_the_assistant_runs_from_the_case_pop_up_and_waits_for_approval(tmp_path
 
     moved = store.get(case.case_id)
     assert moved.priority != "low"                  # the approved change landed
-    assert "Assistant (rules:v1" in moved.notes
+    assert "Assistant (rules:v2" in moved.notes
     assert ProposalStore(proposals_db).get(item.number).status == "approved"
 
 
